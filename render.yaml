@@ -1,14 +1,16 @@
-# Preview deployment only; do not accept real orders before security hardening.
+# TEST PREVIEW ONLY. Not hardened for production or real customer orders.
+# Free Render Postgres expires after 30 days. Local uploads are ephemeral.
 databases:
   - name: beershop-preview-db
     databaseName: beershop
     user: beershop
-    plan: basic
+    plan: free
+    ipAllowList: []
 services:
   - type: web
     name: beershop-preview
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
