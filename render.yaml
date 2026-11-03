@@ -1,0 +1,19 @@
+# Preview deployment only; do not accept real orders before security hardening.
+databases:
+  - name: beershop-preview-db
+    databaseName: beershop
+    user: beershop
+    plan: basic
+services:
+  - type: web
+    name: beershop-preview
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: beershop-preview-db
+          property: connectionString
+      - key: BEERSHOP_ADMIN_TOKEN
+        generateValue: true
