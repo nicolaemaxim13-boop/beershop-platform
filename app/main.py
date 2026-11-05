@@ -2,6 +2,7 @@
 Demo single-store scope; do not deploy without production hardening.
 """
 import os
+import json
 import csv
 import io
 import secrets
@@ -11,23 +12,23 @@ import hashlib
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from decimal import Decimal
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 from fastapi import FastAPI, Depends, Header, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import create_engine, String, Integer, Numeric, Boolean, ForeignKey, UniqueConstraint, select, text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
-# Render provides a postgresql:// URL; use the installed psycopg v3 SQLAlchemy driver.
-if DB_URL.startswith('postgres://'):
-    DB_URL = 'postgresql+psycopg://' + DB_URL[len('postgres://'):]
-elif DB_URL.startswith('postgresql://'):
-    DB_URL = 'postgresql+psycopg://' + DB_URL[len('postgresql://'):]
+from .storage import sqlalchemy_url, migrate_once
+LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
+PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
+# First Neon deployment copies source Render DB before serving traffic.
+DB_URL = sqlalchemy_url(PERSISTENT_URL or LEGACY_URL)
 engine = create_engine(DB_URL, connect_args={'check_same_thread': False, 'timeout': 30} if DB_URL.startswith('sqlite') else {}, pool_pre_ping=True)
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 
@@ -147,6 +148,8 @@ class StatusIn(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app):
+    if PERSISTENT_URL:
+        migrate_once(Base.metadata, LEGACY_URL, engine)
     Base.metadata.create_all(engine)  # Demo bootstrap; replace with Alembic migrations in production.
     with SessionLocal.begin() as db:
         if not db.get(Store, 1):
@@ -155,7 +158,7 @@ async def lifespan(app):
             cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
     yield
-app = FastAPI(title='BeerShop Platform', version='3.2.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='3.3.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -182,7 +185,7 @@ def order_dict(db, o):
             'items': [{'sku': i.sku, 'name': i.name, 'variant_id': i.variant_id, 'quantity': i.quantity, 'unit_price': str(i.unit_price)} for i in lines]}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '3.2.0'}
+def health(): return {'status': 'ok', 'version': '3.3.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -644,4 +647,34 @@ def catalog32_js():
 @app.get('/assets/admin-catalog32.css')
 def catalog32_css():
     return FileResponse(ROOT / 'web' / 'admin-catalog32.css', media_type='text/css',
+                        headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+# Admin-only JSON snapshot. Contains customer PII; requires bearer token.
+@app.get('/api/admin/maintenance/report', dependencies=[Depends(auth)])
+def maintenance_report(db: Session = Depends(session)):
+    names = ('stores', 'categories', 'products', 'variants', 'import_logs', 'orders', 'order_items')
+    counts = {name: db.scalar(select(func.count()).select_from(Base.metadata.tables[name])) for name in names}
+    currencies = {currency: count for currency, count in db.execute(
+        select(Variant.currency, func.count()).group_by(Variant.currency)).all()}
+    return {'storage': 'neon' if PERSISTENT_URL else 'render',
+            'counts': counts, 'currencies': currencies,
+            'products_hidden': db.scalar(select(func.count()).select_from(Product).where(Product.active.is_(False))),
+            'stock_positive': db.scalar(select(func.count()).select_from(Variant).where(Variant.stock > 0))}
+
+@app.get('/api/admin/maintenance/export', dependencies=[Depends(auth)])
+def maintenance_export(db: Session = Depends(session)):
+    snapshot = {'format': 'beershop-snapshot-v1',
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'tables': {t.name: [dict(r._mapping) for r in db.execute(select(t)).all()]
+                           for t in Base.metadata.sorted_tables}}
+    output = json.dumps(snapshot, default=str, ensure_ascii=False).encode('utf-8')
+    return Response(content=output, media_type='application/json; charset=utf-8',
+                    headers={'Content-Disposition': 'attachment; filename="beershop-private-backup.json"',
+                             'Cache-Control': 'private, no-store',
+                             'X-Content-Type-Options': 'nosniff',
+                             'X-Robots-Tag': 'noindex, nofollow'})
+
+@app.get('/assets/admin-backup.js')
+def backup_js():
+    return FileResponse(ROOT / 'web' / 'admin-backup.js', media_type='application/javascript',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
