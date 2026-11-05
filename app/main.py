@@ -12,7 +12,7 @@ import hashlib
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -25,6 +25,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker,
 
 ROOT = Path(__file__).resolve().parents[1]
 from .storage import sqlalchemy_url, migrate_once
+from .fx import fetch_nbu, convert_price
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -101,6 +102,15 @@ class OrderItem(Base):
     quantity: Mapped[int] = mapped_column(Integer)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
 
+class FxState(Base):
+    __tablename__ = 'fx_states'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    current_rate: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    baseline_rate: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    effective_date: Mapped[str] = mapped_column(String(10))
+    checked_at: Mapped[str] = mapped_column(String(40))
+
+
 class CategoryIn(BaseModel):
     slug: str = Field(min_length=2, max_length=90, pattern=r'^[a-z0-9-]+$')
     name: str = Field(min_length=2, max_length=180)
@@ -143,6 +153,9 @@ class CheckoutIn(BaseModel):
     phone: str = Field(min_length=5, max_length=50)
     delivery_address: str = Field(min_length=5, max_length=500)
     items: list[LineIn] = Field(min_length=1, max_length=100)
+    expected_total: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+class QuoteIn(BaseModel):
+    items: list[LineIn] = Field(min_length=1, max_length=100)
 class StatusIn(BaseModel):
     status: str
 
@@ -158,7 +171,7 @@ async def lifespan(app):
             cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
     yield
-app = FastAPI(title='BeerShop Platform', version='3.3.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='3.4.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -169,13 +182,16 @@ def auth(authorization: Annotated[str | None, Header()] = None):
     provided = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
     if not secrets.compare_digest(token, provided): raise HTTPException(401, 'Unauthorized')
 
-def variant_dict(v):
+def variant_dict(v, fx=None):
     import json
-    return {'id': v.id, 'sku': v.sku, 'attributes': json.loads(v.attributes), 'price': str(v.price), 'currency': v.currency, 'stock': v.stock, 'active': v.active}
+    data = {'id': v.id, 'sku': v.sku, 'attributes': json.loads(v.attributes), 'price': str(v.price), 'currency': v.currency, 'stock': v.stock, 'active': v.active}
+    if fx:
+        data.update({'source_price': str(v.price), 'source_currency': v.currency, 'price': str(convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate'])), 'currency': 'UAH', 'rate_date': fx['effective_date']})
+    return data
 
-def product_dict(db, p):
+def product_dict(db, p, fx=None):
     return {'id': p.id, 'slug': p.slug, 'name': p.name, 'description': p.description, 'category_id': p.category_id, 'image_url': p.image_url, 'active': p.active,
-            'variants': [variant_dict(v) for v in db.scalars(select(Variant).where(Variant.product_id == p.id, Variant.store_id == 1).order_by(Variant.id)).all()]}
+            'variants': [variant_dict(v, fx=fx) for v in db.scalars(select(Variant).where(Variant.product_id == p.id, Variant.store_id == 1).order_by(Variant.id)).all()]}
 
 def order_dict(db, o):
     lines = db.scalars(select(OrderItem).where(OrderItem.order_id == o.id)).all()
@@ -184,8 +200,75 @@ def order_dict(db, o):
             'delivery_address': o.delivery_address,
             'items': [{'sku': i.sku, 'name': i.name, 'variant_id': i.variant_id, 'quantity': i.quantity, 'unit_price': str(i.unit_price)} for i in lines]}
 
+
+def fx_context():
+    """NBU daily official rate; persist last good quote; keep original UAH price baseline."""
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        state = db.get(FxState, 1)
+        if state:
+            age = now - datetime.fromisoformat(state.checked_at)
+            if timedelta(0) <= age < timedelta(hours=2):
+                return _fx_payload(state, cached=True)
+        try:
+            current, effective = fetch_nbu()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            if state and now - datetime.fromisoformat(state.checked_at) < timedelta(hours=96):
+                return _fx_payload(state, cached=True, delayed=True)
+            raise HTTPException(503, 'Курс USD/UAH НБУ тимчасово недоступний. Замовлення призупинено.') from exc
+        now_text = now.isoformat()
+        # Same SQL on SQLite/Postgres. Baseline is only written once, never overwritten.
+        db.execute(text('INSERT INTO fx_states (id, current_rate, baseline_rate, effective_date, checked_at) '
+                        'VALUES (1, :rate, :rate, :effective, :checked) ON CONFLICT (id) DO UPDATE SET '
+                        'current_rate=excluded.current_rate, effective_date=excluded.effective_date, '
+                        'checked_at=excluded.checked_at'),
+                   {'rate': str(current), 'effective': effective, 'checked': now_text})
+        db.commit()
+        return _fx_payload(db.get(FxState, 1), cached=False)
+
+
+def _fx_payload(state, cached=False, delayed=False):
+    effective = datetime.fromisoformat(state.effective_date).date()
+    today = datetime.now(timezone.utc).date()
+    if not today - timedelta(days=7) <= effective <= today + timedelta(days=1):
+        raise HTTPException(503, 'Курс НБУ застарілий. Замовлення призупинено.')
+    return {'rate': state.current_rate, 'baseline_rate': state.baseline_rate,
+            'effective_date': state.effective_date, 'checked_at': state.checked_at,
+            'cached': cached, 'delayed': delayed}
+
+@app.get('/api/fx/usd-uah')
+def fx_public():
+    fx = fx_context()
+    return {**fx, 'rate': str(fx['rate']), 'baseline_rate': str(fx['baseline_rate']),
+            'source': 'NBU', 'conversion': 'UAH / USD linked to USD-UAH rate'}
+
+@app.post('/api/quote')
+def quote_prices(data: QuoteIn, db: Session = Depends(session)):
+    if len({x.variant_id for x in data.items}) != len(data.items):
+        raise HTTPException(422, 'Duplicate variant IDs')
+    fx = fx_context()
+    ids = [x.variant_id for x in data.items]
+    variants = {v.id: v for v in db.scalars(select(Variant).where(
+        Variant.store_id == 1, Variant.id.in_(ids))).all()}
+    visible = {p.id for p in db.scalars(select(Product).where(
+        Product.store_id == 1, Product.active.is_(True),
+        Product.id.in_([v.product_id for v in variants.values()]))).all()}
+    total = Decimal('0.00')
+    details = []
+    for line in data.items:
+        v = variants.get(line.variant_id)
+        if not v or not v.active or v.product_id not in visible:
+            raise HTTPException(404, 'Variant not found')
+        if v.stock < line.quantity:
+            raise HTTPException(409, 'Insufficient stock: ' + v.sku)
+        unit = convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate'])
+        details.append({'variant_id': v.id, 'unit_price_uah': str(unit), 'quantity': line.quantity})
+        total += unit * line.quantity
+    return {'currency': 'UAH', 'total': str(total), 'items': details,
+            'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
+
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '3.3.0'}
+def health(): return {'status': 'ok', 'version': '3.4.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -199,12 +282,13 @@ def products(q: str = Query('', max_length=100), category: str = Query('', max_l
         stmt = stmt.where(Product.category_id == cat.id)
     count = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.scalars(stmt.order_by(Product.id.desc()).offset((page - 1) * limit).limit(limit)).all()
-    return {'items': [product_dict(db, p) for p in rows], 'total': count, 'page': page, 'limit': limit}
+    fx = fx_context()
+    return {'items': [product_dict(db, p, fx=fx) for p in rows], 'total': count, 'page': page, 'limit': limit}
 @app.get('/api/products/{slug}')
 def product(slug: str, db: Session = Depends(session)):
     p = db.scalar(select(Product).where(Product.store_id == 1, Product.slug == slug, Product.active.is_(True)))
     if not p: raise HTTPException(404, 'Product not found')
-    return product_dict(db, p)
+    return product_dict(db, p, fx=fx_context())
 @app.post('/api/admin/categories', status_code=201, dependencies=[Depends(auth)])
 def add_category(data: CategoryIn, db: Session = Depends(session)):
     if db.scalar(select(Category).where(Category.store_id == 1, Category.slug == data.slug)): raise HTTPException(409, 'Category slug exists')
@@ -236,6 +320,7 @@ def update_variant(variant_id: int, data: VariantUpdate, db: Session = Depends(s
     db.commit(); return variant_dict(v)
 @app.post('/api/orders', status_code=201)
 def checkout(data: CheckoutIn, db: Session = Depends(session)):
+    fx = fx_context()
     if len({x.variant_id for x in data.items}) != len(data.items): raise HTTPException(422, 'Duplicate variant IDs')
     try:
         if db.bind.dialect.name == 'sqlite': db.execute(text('BEGIN IMMEDIATE'))
@@ -249,14 +334,15 @@ def checkout(data: CheckoutIn, db: Session = Depends(session)):
         for line in data.items:
             v = by_id.get(line.variant_id)
             if not v or not v.active or v.product_id not in names or not names[v.product_id].active: raise HTTPException(404, 'Variant not found')
-            if v.currency != 'UAH': raise HTTPException(409, 'USD-priced items require a confirmed UAH price before checkout')
             if v.stock < line.quantity: raise HTTPException(409, 'Insufficient stock: ' + v.sku)
-            total += v.price * line.quantity
+            total += convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate']) * line.quantity
+        if data.expected_total is not None and total != data.expected_total:
+            raise HTTPException(409, 'Ціна змінилася разом із курсом USD/UAH. Оновіть кошик і підтвердьте нову суму.')
         order = Order(store_id=1, request_key=data.request_key, name=data.name, email=data.email, phone=data.phone, delivery_address=data.delivery_address, total=total)
         db.add(order); db.flush()
         for line in data.items:
             v = by_id[line.variant_id]; v.stock -= line.quantity
-            db.add(OrderItem(order_id=order.id, variant_id=v.id, sku=v.sku, name=names[v.product_id].name, quantity=line.quantity, unit_price=v.price))
+            db.add(OrderItem(order_id=order.id, variant_id=v.id, sku=v.sku, name=names[v.product_id].name, quantity=line.quantity, unit_price=convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate'])))
         db.commit()
         return order_dict(db, order)
     except Exception:
@@ -678,3 +764,8 @@ def maintenance_export(db: Session = Depends(session)):
 def backup_js():
     return FileResponse(ROOT / 'web' / 'admin-backup.js', media_type='application/javascript',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+@app.get('/assets/store-fx.js')
+def store_fx_js():
+    return FileResponse(ROOT / 'web' / 'store-fx.js', media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
