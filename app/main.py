@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import uuid4
 from fastapi import FastAPI, Depends, Header, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
@@ -155,7 +155,7 @@ async def lifespan(app):
             cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
     yield
-app = FastAPI(title='BeerShop Platform', version='2.1.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='3.1.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -182,7 +182,7 @@ def order_dict(db, o):
             'items': [{'sku': i.sku, 'name': i.name, 'variant_id': i.variant_id, 'quantity': i.quantity, 'unit_price': str(i.unit_price)} for i in lines]}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '2.1.0'}
+def health(): return {'status': 'ok', 'version': '3.1.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -461,3 +461,127 @@ def uploaded_image(filename: str):
     f=ROOT/'uploads'/filename
     if not f.is_file(): raise HTTPException(404)
     return FileResponse(f,headers={'X-Content-Type-Options':'nosniff'})
+
+
+# Bulk Admin 3.1: scoped SKU catalog, preview-first, atomic optimistic editing.
+# Existing inventory is not changed when these endpoints are added.
+class BulkChange(BaseModel):
+    product_id: int = Field(gt=0)
+    variant_id: int = Field(gt=0)
+    expected_product_active: bool
+    expected_variant_active: bool
+    expected_price: Decimal = Field(ge=0, max_digits=12, decimal_places=2)
+    expected_currency: Literal['UAH', 'USD']
+    expected_stock: int = Field(ge=0)
+    product_active: bool | None = None
+    variant_active: bool | None = None
+    price: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    currency: Literal['UAH', 'USD'] | None = None
+    stock: int | None = Field(default=None, ge=0, le=1000000)
+
+class BulkRequest(BaseModel):
+    changes: list[BulkChange] = Field(min_length=1, max_length=100)
+
+@app.get('/api/admin/bulk/catalog', dependencies=[Depends(auth)])
+def bulk_catalog(q: str = Query('', max_length=100), category_id: int | None = Query(None, gt=0),
+                 status: Literal['all', 'published', 'hidden'] = 'all',
+                 currency: Literal['all', 'UAH', 'USD'] = 'all', page: int = Query(1, ge=1),
+                 limit: int = Query(25, ge=1, le=100), db: Session = Depends(session)):
+    stmt = select(Product, Variant, Category.name).join(Variant, Variant.product_id == Product.id).join(
+        Category, Category.id == Product.category_id).where(
+        Product.store_id == 1, Variant.store_id == 1, Category.store_id == 1)
+    if q:
+        safe = q.replace('\\', '\\\\').replace('%', r'\%').replace('_', r'\_')
+        stmt = stmt.where(Product.name.ilike('%' + safe + '%', escape='\\') |
+                          Variant.sku.ilike('%' + safe + '%', escape='\\'))
+    if category_id is not None: stmt = stmt.where(Product.category_id == category_id)
+    if status == 'published': stmt = stmt.where(Product.active.is_(True), Variant.active.is_(True))
+    if status == 'hidden': stmt = stmt.where((Product.active.is_(False)) | (Variant.active.is_(False)))
+    if currency != 'all': stmt = stmt.where(Variant.currency == currency)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = db.execute(stmt.order_by(Product.id.desc(), Variant.id).offset((page-1)*limit).limit(limit)).all()
+    items = [{'product_id': p.id, 'variant_id': v.id, 'name': p.name,
+              'category_id': p.category_id, 'category': category_name,
+              'sku': v.sku, 'price': str(v.price), 'currency': v.currency,
+              'stock': v.stock, 'product_active': p.active, 'variant_active': v.active}
+             for p, v, category_name in rows]
+    return {'items': items, 'total': total, 'page': page, 'limit': limit}
+
+def _bulk_process(payload: BulkRequest, db: Session, apply: bool):
+    entries = payload.changes
+    ids = [e.variant_id for e in entries]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(422, 'Duplicate variant IDs in batch')
+    # SQLite single-writer lock and PostgreSQL row-level locks serialize updates.
+    if apply and db.bind.dialect.name == 'sqlite':
+        db.execute(text('BEGIN IMMEDIATE'))
+    vstmt = select(Variant).where(Variant.store_id == 1, Variant.id.in_(ids)).order_by(Variant.id)
+    if apply: vstmt = vstmt.with_for_update()
+    variants = db.scalars(vstmt).all()
+    by_variant = {v.id: v for v in variants}
+    product_ids = sorted({e.product_id for e in entries})
+    pstmt = select(Product).where(Product.store_id == 1, Product.id.in_(product_ids)).order_by(Product.id)
+    if apply: pstmt = pstmt.with_for_update()
+    products = db.scalars(pstmt).all()
+    by_product = {p.id: p for p in products}
+    changes = []
+    requested_product_active = {}
+    for e in entries:
+        p, v = by_product.get(e.product_id), by_variant.get(e.variant_id)
+        if p is None or v is None or v.product_id != p.id:
+            raise HTTPException(404, f'Invalid product/variant pair: {e.product_id}/{e.variant_id}')
+        if (p.active != e.expected_product_active or v.active != e.expected_variant_active or
+            v.price != e.expected_price or v.currency != e.expected_currency or
+            v.stock != e.expected_stock):
+            raise HTTPException(409, f'SKU {v.sku} changed since loading. Refresh and review again.')
+        if e.currency is not None and e.currency != v.currency and e.price is None:
+            raise HTTPException(422, f'Changing currency for SKU {v.sku} requires a verified new price')
+        if e.product_active is not None:
+            previous = requested_product_active.setdefault(p.id, e.product_active)
+            if previous != e.product_active:
+                raise HTTPException(422, f'Conflicting visibility for product {p.id}')
+        fields = {}
+        for field in ('product_active', 'variant_active', 'price', 'currency', 'stock'):
+            proposed = getattr(e, field)
+            if proposed is None: continue
+            current = (p.active if field == 'product_active' else
+                       v.active if field == 'variant_active' else getattr(v, field))
+            if proposed != current:
+                fields[field] = {'from': str(current) if field == 'price' else current,
+                                 'to': str(proposed) if field == 'price' else proposed}
+        if not fields:
+            raise HTTPException(422, f'No actual changes for SKU {v.sku}')
+        changes.append({'product_id': p.id, 'variant_id': v.id, 'sku': v.sku, 'fields': fields})
+    # Validate all snapshots first, mutate the batch only after validation.
+    if apply:
+        for entry in entries:
+            p, v = by_product[entry.product_id], by_variant[entry.variant_id]
+            for field in ('product_active', 'variant_active', 'price', 'currency', 'stock'):
+                value = getattr(entry, field)
+                if value is not None:
+                    target = p if field == 'product_active' else v
+                    setattr(target, 'active' if field in ('product_active', 'variant_active') else field, value)
+        db.commit()
+    return {'count': len(changes), 'applied': apply, 'changes': changes}
+
+@app.post('/api/admin/bulk/preview', dependencies=[Depends(auth)])
+def bulk_preview(payload: BulkRequest, db: Session = Depends(session)):
+    return _bulk_process(payload, db, False)
+
+@app.post('/api/admin/bulk/apply', dependencies=[Depends(auth)])
+def bulk_apply(payload: BulkRequest, db: Session = Depends(session)):
+    try:
+        return _bulk_process(payload, db, True)
+    except Exception:
+        db.rollback()
+        raise
+
+@app.get('/assets/admin-bulk.js')
+def bulk_js():
+    return FileResponse(ROOT / 'web' / 'admin-bulk.js', media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+@app.get('/assets/admin-bulk.css')
+def bulk_css():
+    return FileResponse(ROOT / 'web' / 'admin-bulk.css', media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
