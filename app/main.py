@@ -155,7 +155,7 @@ async def lifespan(app):
             cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
     yield
-app = FastAPI(title='BeerShop Platform', version='3.1.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='3.2.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -182,7 +182,7 @@ def order_dict(db, o):
             'items': [{'sku': i.sku, 'name': i.name, 'variant_id': i.variant_id, 'quantity': i.quantity, 'unit_price': str(i.unit_price)} for i in lines]}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '3.1.0'}
+def health(): return {'status': 'ok', 'version': '3.2.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -585,3 +585,63 @@ def bulk_js():
 def bulk_css():
     return FileResponse(ROOT / 'web' / 'admin-bulk.css', media_type='text/css',
                         headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+# Mobile catalog manager 3.2: paginated product discovery and category renames.
+# Deploying this module does not change preexisting product data.
+class CategoryRename(BaseModel):
+    name: str = Field(min_length=2, max_length=180)
+
+@app.get('/api/admin/catalog32', dependencies=[Depends(auth)])
+def mobile_catalog(q: str = Query('', max_length=100),
+                   category_id: int | None = Query(None, gt=0),
+                   page: int = Query(1, ge=1), limit: int = Query(20, ge=1, le=50),
+                   db: Session = Depends(session)):
+    stmt = select(Product).where(Product.store_id == 1)
+    if q:
+        safe = q.replace('\\', '\\\\').replace('%', r'\%').replace('_', r'\_')
+        sku_ids = select(Variant.product_id).where(Variant.store_id == 1,
+                          Variant.sku.ilike('%' + safe + '%', escape='\\'))
+        stmt = stmt.where(Product.name.ilike('%' + safe + '%', escape='\\') |
+                          Product.id.in_(sku_ids))
+    if category_id is not None: stmt = stmt.where(Product.category_id == category_id)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = db.scalars(stmt.order_by(Product.id.desc()).offset((page-1)*limit).limit(limit)).all()
+    return {'total':total,'page':page,'limit':limit,'items':[
+        {'id':p.id,'name':p.name,'image_url':p.image_url,'category_id':p.category_id,
+         'active':p.active,'variants':len(db.scalars(select(Variant.id).where(
+            Variant.store_id == 1, Variant.product_id == p.id)).all())}
+        for p in rows]}
+
+@app.get('/api/admin/catalog32/{product_id}', dependencies=[Depends(auth)])
+def mobile_product(product_id: int, db: Session = Depends(session)):
+    p = db.scalar(select(Product).where(Product.id == product_id, Product.store_id == 1))
+    if p is None: raise HTTPException(404, 'Product not found')
+    return product_dict(db, p)
+
+@app.get('/api/admin/categories32', dependencies=[Depends(auth)])
+def mobile_categories(db: Session = Depends(session)):
+    cats = db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.name)).all()
+    return [{'id':c.id,'name':c.name,'slug':c.slug,
+             'products':db.scalar(select(func.count()).select_from(Product).where(
+                 Product.store_id == 1, Product.category_id == c.id))} for c in cats]
+
+@app.patch('/api/admin/categories32/{category_id}', dependencies=[Depends(auth)])
+def rename_category(category_id: int, payload: CategoryRename, db: Session = Depends(session)):
+    c = db.scalar(select(Category).where(Category.id == category_id, Category.store_id == 1))
+    if c is None: raise HTTPException(404, 'Category not found')
+    name = payload.name.strip()
+    if len(name) < 2: raise HTTPException(422, 'Category name is too short')
+    c.name = name
+    db.commit()
+    return {'id':c.id,'slug':c.slug,'name':c.name}
+
+@app.get('/assets/admin-catalog32.js')
+def catalog32_js():
+    return FileResponse(ROOT / 'web' / 'admin-catalog32.js', media_type='application/javascript',
+                        headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+@app.get('/assets/admin-catalog32.css')
+def catalog32_css():
+    return FileResponse(ROOT / 'web' / 'admin-catalog32.css', media_type='text/css',
+                        headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})

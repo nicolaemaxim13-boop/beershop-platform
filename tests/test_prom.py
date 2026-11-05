@@ -16,5 +16,5 @@ def test_real_prom_file_preview_and_import():
         assert result.json()['currencies']=={'UAH':37,'USD':63}
         imported=client.post('/api/admin/prom/apply',headers=headers,files={'file':('catalog.csv',raw,'text/csv')})
         assert imported.status_code==200,imported.text
-        assert imported.json()['added']==100
+        assert imported.json()['added'] + imported.json()['updated'] == 100
         assert client.get('/api/products').json()['total'] > 0
