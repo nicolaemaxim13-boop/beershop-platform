@@ -171,7 +171,7 @@ async def lifespan(app):
             cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
     yield
-app = FastAPI(title='BeerShop Platform', version='4.0.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='4.1.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -271,7 +271,7 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
             'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '4.0.0'}
+def health(): return {'status': 'ok', 'version': '4.1.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -783,9 +783,16 @@ def store_fx_js():
 
 # Register audited operations and their tables before FastAPI startup creates tables.
 from .ops40 import setup_ops
-setup_ops(app, Base, Order, OrderItem, auth, session)
+OrderOperations, OperationsAudit = setup_ops(app, Base, Order, OrderItem, auth, session)
+from .connectors41 import setup_connectors41
+setup_connectors41(app, Base, Order, OrderItem, OrderOperations, OperationsAudit, auth, session)
 
 @app.get('/assets/ops40.js')
 def ops40_js():
     return FileResponse(ROOT / 'web' / 'ops40.js', media_type='application/javascript',
                         headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+@app.get('/assets/connectors41.js')
+def connector_js():
+    return FileResponse(ROOT / 'web' / 'connectors41.js', media_type='application/javascript',
+                        headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
