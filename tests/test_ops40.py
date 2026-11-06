@@ -71,7 +71,7 @@ def test_manual_operations_have_audit_idempotency_and_guards():
         assert draft.status_code==200,draft.text
         assert draft.json()['source_uuid']==f'BS-{oid:06}'
         assert draft.json()['products'][0]['quantity']==1
-        assert client.get(f'/api/admin/ops/orders/{oid}/keycrm-payload?source_id=123').json()==draft.json()
+        assert client.get(f'/api/admin/ops/orders/{oid}/keycrm-payload?source_id=123',headers=AUTH).json()==draft.json()
         crm={'external_order_id':'CRM-'+uuid4().hex,'attestation':'ORDER_CONFIRMED_IN_KEYCRM'}
         assert client.post(f'/api/admin/ops/orders/{oid}/keycrm-confirm',
                            headers=AUTH,json=crm).status_code==200
