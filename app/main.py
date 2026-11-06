@@ -171,7 +171,7 @@ async def lifespan(app):
             cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
     yield
-app = FastAPI(title='BeerShop Platform', version='4.1.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='4.1.1', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -271,7 +271,7 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
             'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '4.1.0'}
+def health(): return {'status': 'ok', 'version': '4.1.1'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -796,3 +796,4 @@ def ops40_js():
 def connector_js():
     return FileResponse(ROOT / 'web' / 'connectors41.js', media_type='application/javascript',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+

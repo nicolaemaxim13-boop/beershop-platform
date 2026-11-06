@@ -1,5 +1,8 @@
 """Provider integration 4.1: no real outbound network calls in CI."""
 import os
+import io
+import json
+import pytest
 from uuid import uuid4
 from decimal import Decimal
 from fastapi import HTTPException
@@ -140,9 +143,194 @@ def test_nova_tracking_read_only_and_key_guard(monkeypatch):
 
 def test_provider_request_has_no_redirect(monkeypatch):
     # Validate callback semantics without internet.
-    opener=connector.build_opener(connector._NoRedirect())
     import urllib.request
     from urllib.response import addinfourl
     assert connector._NoRedirect().redirect_request(None,None,302,'Moved',{},'https://evil.example') is None
     assert connector.KEYCRM_ORIGIN=='https://openapi.keycrm.app/v1'
     assert connector.NP_ENDPOINT=='https://api.novaposhta.ua/v2.0/json/'
+
+
+def test_crm_refresh_reconciles_and_never_confirms_payment(monkeypatch):
+    monkeypatch.setenv('KEYCRM_API_KEY', 'TEST-ONLY')
+    monkeypatch.setenv('KEYCRM_SYNC_ENABLED', '1')
+    monkeypatch.setattr(connector, 'send_keycrm_order', lambda payload: (_ for _ in ()).throw(HTTPException(502)))
+    with TestClient(app) as c:
+        order = create_order(c)
+        oid = order['id']
+        assert c.post(f'/api/admin/connectors41/keycrm/sync/{oid}', headers=AUTH,
+                      json={'source_id':36,'attestation':'SEND_PERSONAL_DATA_TO_KEYCRM'}).status_code == 502
+        response = {'id':987654,'source_id':36,'source_uuid':f'BS-{oid:06}',
+                    'status_id':7,'status':{'id':7,'name':'Complete'},'payment_status':'paid',
+                    'buyer':{'email':'must-not-be-stored@example.invalid'}}
+        monkeypatch.setattr(connector, 'read_keycrm_order', lambda external: response)
+        endpoint = f'/api/admin/connectors41/keycrm/refresh/{oid}'
+        body = {'source_id':36,'external_order_id':'987654','attestation':'CHECK_ORDER_IN_KEYCRM'}
+        assert c.post(endpoint, json=body).status_code == 401
+        assert c.post(endpoint, headers=AUTH, json={**body,'attestation':'no'}).status_code == 422
+        result = c.post(endpoint, headers=AUTH, json=body)
+        assert result.status_code == 200, result.text
+        assert result.json()['status_id'] == 7
+        snapshot = c.get(f'/api/admin/connectors41/snapshot/{oid}', headers=AUTH).json()
+        assert snapshot['keycrm']['external_id'] == '987654'
+        assert 'buyer' not in json.dumps(snapshot)
+        dispatch = c.get(f'/api/admin/connectors41/keycrm/dispatch/{oid}', headers=AUTH).json()
+        assert dispatch['state'] == 'reconciled'
+        assert c.post(endpoint, headers=AUTH, json=body).status_code == 200
+        local = c.get('/api/admin/ops/orders', headers=AUTH).json()[0]
+        assert local['payment_status'] == 'unpaid'
+        assert local['order_status'] == 'pending'
+
+
+@pytest.mark.parametrize('change,expected', [
+    ({'id':123},409), ({'source_uuid':'BS-OTHER'},409), ({'source_id':99},409),
+    ({'id':True},409), ({'status_id':None},502), ({'status':{'id':9,'name':'Bad'}},502)])
+def test_crm_mismatches_leave_order_unlinked(monkeypatch, change, expected):
+    with TestClient(app) as c:
+        oid = create_order(c)['id']
+        data = {'id':987655,'source_id':36,'source_uuid':f'BS-{oid:06}',
+                'status_id':7,'status':{'id':7,'name':'Complete'},**change}
+        monkeypatch.setattr(connector, 'read_keycrm_order', lambda external: data)
+        result = c.post(f'/api/admin/connectors41/keycrm/refresh/{oid}', headers=AUTH,
+                        json={'source_id':36,'external_order_id':'987655','attestation':'CHECK_ORDER_IN_KEYCRM'})
+        assert result.status_code == expected, result.text
+        assert c.get('/api/admin/ops/orders', headers=AUTH).json()[0]['crm_order_id'] is None
+
+
+def test_delivery_sync_is_monotonic_audited_and_payment_independent(monkeypatch):
+    from app.main import SessionLocal, OrderOperations
+    with TestClient(app) as c:
+        oid = create_order(c)['id']
+        number = str(20450000000000 + oid)
+        with SessionLocal.begin() as db:
+            db.add(OrderOperations(order_id=oid,tracking_number=number,delivery_status='created'))
+        endpoint = f'/api/admin/connectors41/nova-poshta/sync/{oid}'
+        body = {'attestation':'SYNC_EXISTING_WAYBILL_STATUS'}
+        assert c.post(endpoint,json=body).status_code == 401
+        for code, expected, review in [('5','handed_over',False),('9','delivered',False),
+                                      ('9','delivered',False),('1','delivered',True),('999','delivered',True)]:
+            monkeypatch.setattr(connector, 'track_nova_poshta', lambda n: {
+                'tracking_number':n,'status_code':code,'status':'Test status'})
+            result = c.post(endpoint,headers=AUTH,json=body)
+            assert result.status_code == 200,result.text
+            assert result.json()['delivery_status'] == expected
+            assert result.json()['review_required'] is review
+        local = c.get('/api/admin/ops/orders',headers=AUTH).json()[0]
+        assert local['payment_status'] == 'unpaid'
+        assert local['order_status'] == 'pending'
+        snapshot = c.get(f'/api/admin/connectors41/snapshot/{oid}',headers=AUTH).json()
+        assert snapshot['nova_poshta']['status_code'] == '999'
+
+
+def mock_transport(monkeypatch, data, status=200):
+    calls = []
+    class Response(io.BytesIO):
+        pass
+    class Opener:
+        def open(self, request, timeout):
+            calls.append(request)
+            response = Response(data if isinstance(data, bytes) else json.dumps(data).encode())
+            response.status = status
+            return response
+    monkeypatch.setattr(connector, 'build_opener', lambda *args: Opener())
+    monkeypatch.setattr(connector, '_LAST_CALL', [-100.0])
+    return calls
+
+
+def test_official_transport_contracts_and_redaction(monkeypatch):
+    monkeypatch.setenv('KEYCRM_API_KEY','TEST-CRM-SECRET')
+    calls = mock_transport(monkeypatch, {'id':123})
+    assert connector.read_keycrm_order('123') == {'id':123}
+    assert calls[0].full_url == 'https://openapi.keycrm.app/v1/order/123?include=status'
+    assert calls[0].get_method() == 'GET'
+    assert calls[0].get_header('Authorization') == 'Bearer TEST-CRM-SECRET'
+    with pytest.raises(HTTPException) as error:
+        connector.read_keycrm_order('../other')
+    assert error.value.status_code == 422
+    monkeypatch.setenv('NOVA_POSHTA_API_KEY','TEST-NP-SECRET')
+    number = '20450000000001'
+    calls = mock_transport(monkeypatch, {'success':True,'data':[{
+        'Number':number,'StatusCode':'9','Status':'Received','RecipientFullName':'PRIVATE'}]})
+    result = connector.track_nova_poshta(number)
+    payload = json.loads(calls[0].data)
+    assert calls[0].full_url == connector.NP_ENDPOINT
+    assert payload['modelName'] == 'TrackingDocument'
+    assert payload['calledMethod'] == 'getStatusDocuments'
+    assert payload['methodProperties'] == {'Documents':[{'DocumentNumber':number}]}
+    assert 'PRIVATE' not in json.dumps(result)
+    assert 'TEST-NP-SECRET' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('data', [
+    {'success':False,'errors':['TEST-NP-SECRET']},
+    {'success':True,'data':[]},
+    {'success':True,'data':[{'Number':'20450000000002'}]},
+    b'not json', b'x'*131073])
+def test_invalid_provider_responses_are_safe(monkeypatch, data):
+    monkeypatch.setenv('NOVA_POSHTA_API_KEY','TEST-NP-SECRET')
+    mock_transport(monkeypatch, data)
+    with pytest.raises(HTTPException) as error:
+        connector.track_nova_poshta('20450000000001')
+    assert error.value.status_code == 502
+    assert 'TEST-NP-SECRET' not in error.value.detail
+
+
+def test_privatbank_availability_never_reads_transactions(monkeypatch):
+    monkeypatch.setenv('PRIVATBANK_STATEMENT_TOKEN','TEST-BANK-SECRET')
+    monkeypatch.delenv('PRIVATBANK_READ_ENABLED',raising=False)
+    with TestClient(app) as c:
+        endpoint = '/api/admin/connectors41/privatbank/availability'
+        assert c.get(endpoint).status_code == 401
+        assert c.get(endpoint,headers=AUTH).status_code == 503
+        monkeypatch.setenv('PRIVATBANK_READ_ENABLED','1')
+        calls = mock_transport(monkeypatch, {'status':'SUCCESS','type':'settings',
+                                            'settings':{'phase':'WRK','work_balance':'N'}})
+        result = c.get(endpoint,headers=AUTH)
+        assert result.status_code == 200,result.text
+        assert result.json()['settings_access_verified'] is True
+        assert result.json()['statements_access_verified'] is False
+        assert result.json()['payment_automation'] is False
+        assert calls[0].full_url == connector.PRIVATBANK_SETTINGS
+        assert calls[0].get_method() == 'GET'
+        assert calls[0].get_header('Token') == 'TEST-BANK-SECRET'
+        assert 'TEST-BANK-SECRET' not in result.text
+
+
+def test_bank_reference_requires_exact_invoice(monkeypatch):
+    with TestClient(app) as c:
+        order = create_order(c)
+        oid = order['id']
+        body = {'transaction_id':'TEST-'+uuid4().hex,'amount':order['total'],'currency':'UAH',
+                'reference':f'BS-{oid:06}0','attestation':'BANK_STATEMENT_CHECKED'}
+        response = c.post(f'/api/admin/ops/orders/{oid}/bank-confirm',headers=AUTH,json=body)
+        assert response.status_code == 409
+        assert c.get('/api/admin/ops/orders',headers=AUTH).json()[0]['payment_status'] == 'unpaid'
+
+
+@pytest.mark.parametrize('failure,expected', [(401,503),(403,503),(429,503),(500,502),('timeout',502)])
+def test_transport_does_not_retry_or_expose_provider_errors(monkeypatch, failure, expected):
+    from urllib.error import HTTPError
+    calls = []
+    class Opener:
+        def open(self, request, timeout):
+            calls.append(request)
+            if failure == 'timeout':
+                raise TimeoutError('SECRET-AND-BUYER')
+            raise HTTPError(request.full_url,failure,'SECRET-AND-BUYER',{},io.BytesIO(b'SECRET-AND-BUYER'))
+    monkeypatch.setattr(connector,'build_opener',lambda *args:Opener())
+    with pytest.raises(HTTPException) as error:
+        connector._request_json(connector.KEYCRM_ORIGIN+'/order','POST',payload={'test':True})
+    assert error.value.status_code == expected
+    assert 'SECRET-AND-BUYER' not in error.value.detail
+    assert len(calls) == 1
+
+
+def test_bank_availability_rejects_invalid_or_busy_response(monkeypatch):
+    monkeypatch.setenv('PRIVATBANK_STATEMENT_TOKEN','TEST-ONLY')
+    monkeypatch.setenv('PRIVATBANK_READ_ENABLED','1')
+    mock_transport(monkeypatch,{'status':'ERROR','description':'TEST-ONLY'})
+    with pytest.raises(HTTPException) as error:
+        connector.privatbank_availability()
+    assert error.value.status_code == 502
+    mock_transport(monkeypatch,{'status':'SUCCESS','type':'settings','settings':{'phase':'REG','work_balance':'Y'}})
+    assert connector.privatbank_availability()['statements_available_now'] is False
+

@@ -11,10 +11,14 @@ async function conn41Load(){
    (result.keycrm.outbound_enabled?'Ключ налаштовано. Дозволено ручне відправлення замовлення.':'Ключ налаштовано. Відправлення замовлень вимкнено до KEYCRM_SYNC_ENABLED=1.'):'Ключ KeyCRM ще не налаштовано в Render.';
   conn41('conn41NovaStatus').textContent=result.nova_poshta.configured?
    'Ключ Нової пошти налаштовано. Можна перевірити існуючу ТТН.':'Ключ Нової пошти ще не налаштовано в Render.';
-  conn41('conn41BankStatus').textContent='ПриватБанк: реальної API-звірки поки немає. Оплату підтверджує оператор за випискою.';
+  conn41('conn41BankStatus').textContent=result.privatbank.configured?
+   'Токен Автоклієнта налаштовано. Доступ до виписок ще не підтверджено.':'Токен Автоклієнта не налаштовано. Автоматичне підтвердження оплати вимкнено.';
   conn41('conn41FetchSources').disabled=!result.keycrm.configured;
   conn41('conn41Send').disabled=!(result.keycrm.configured && result.keycrm.outbound_enabled);
   conn41('conn41Track').disabled=!result.nova_poshta.configured;
+  conn41('conn41Refresh').disabled=!result.keycrm.configured;
+  conn41('conn41SyncTracking').disabled=!result.nova_poshta.configured;
+  conn41('conn41BankCheck').disabled=!(result.privatbank.configured && result.privatbank.read_enabled);
  }catch(e){msg('Інтеграції: '+e.message)}
 }
 async function conn41Sources(){
@@ -63,3 +67,44 @@ async function conn41Track(){
  }catch(e){msg('Нова пошта: '+e.message)}
  finally{btn.disabled=false}
 }
+
+async function conn41Refresh(){
+ const id=Number(conn41('conn41Order').value);
+ const source=Number(conn41('conn41Source').value);
+ const external=conn41('conn41ExternalOrder').value.trim();
+ if(!Number.isSafeInteger(id)||id<=0||!Number.isSafeInteger(source)||source<=0||!/^[1-9][0-9]{0,17}$/.test(external))
+  return msg('Вкажіть замовлення BeerShop, джерело та числовий ID KeyCRM.');
+ const btn=conn41('conn41Refresh');btn.disabled=true;
+ try{
+  const data=await api('/api/admin/connectors41/keycrm/refresh/'+id,{method:'POST',body:JSON.stringify({
+   source_id:source,external_order_id:external,attestation:'CHECK_ORDER_IN_KEYCRM'})});
+  conn41('conn41Report').textContent=JSON.stringify(data,null,2);
+  msg('Замовлення звірено. Статус KeyCRM збережено.');
+ }catch(e){msg('Звірка KeyCRM: '+e.message)}
+ finally{await conn41Load()}
+}
+async function conn41Snapshot(){
+ const id=Number(conn41('conn41Order').value);
+ if(!Number.isSafeInteger(id)||id<=0)return msg('Вкажіть ID замовлення BeerShop.');
+ try{conn41('conn41Report').textContent=JSON.stringify(await api('/api/admin/connectors41/snapshot/'+id),null,2)}
+ catch(e){msg(e.message)}
+}
+async function conn41SyncTracking(){
+ const id=Number(conn41('conn41TrackingOrder').value);
+ if(!Number.isSafeInteger(id)||id<=0)return msg('Вкажіть ID замовлення з ТТН.');
+ const btn=conn41('conn41SyncTracking');btn.disabled=true;
+ try{
+  const data=await api('/api/admin/connectors41/nova-poshta/sync/'+id,{method:'POST',body:JSON.stringify({
+   attestation:'SYNC_EXISTING_WAYBILL_STATUS'})});
+  conn41('conn41TrackingReport').textContent=JSON.stringify(data,null,2);
+  msg(data.review_required?'Статус потребує ручної перевірки.':'Статус доставки синхронізовано.');
+ }catch(e){msg('Нова пошта: '+e.message)}
+ finally{await conn41Load()}
+}
+async function conn41BankCheck(){
+ const btn=conn41('conn41BankCheck');btn.disabled=true;
+ try{conn41('conn41BankReport').textContent=JSON.stringify(await api('/api/admin/connectors41/privatbank/availability'),null,2)}
+ catch(e){msg('ПриватБанк: '+e.message)}
+ finally{await conn41Load()}
+}
+

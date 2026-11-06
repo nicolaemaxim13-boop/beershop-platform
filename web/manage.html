@@ -91,6 +91,10 @@
     <label for="conn41Order">ID замовлення BeerShop</label>
     <input id="conn41Order" type="number" min="1" step="1" placeholder="Номер замовлення у BeerShop">
     <button type="button" class="secondary" onclick="conn41CheckDispatch()">Перевірити історію відправлення</button>
+    <label for="conn41ExternalOrder">ID замовлення KeyCRM</label>
+    <input id="conn41ExternalOrder" type="text" inputmode="numeric" pattern="[1-9][0-9]*">
+    <button type="button" id="conn41Refresh" disabled onclick="conn41Refresh()">Звірити замовлення і статус KeyCRM</button>
+    <button type="button" class="secondary" onclick="conn41Snapshot()">Остання звірка</button>
     <label class="ops-check"><input type="checkbox" id="conn41Consent"> Я уповноважений передати дані цього покупця у KeyCRM та обрав правильне джерело</label>
     <button type="button" id="conn41Send" disabled onclick="conn41Send()">Надіслати замовлення у KeyCRM</button>
     <p class="muted">Після будь-якого збою повторний POST заблоковано: перевіряйте source_uuid вручну, щоб не створити дублікат.</p>
@@ -102,12 +106,14 @@
     <label for="conn41TrackingOrder">ID замовлення з уже зареєстрованою ТТН</label>
     <input type="number" id="conn41TrackingOrder" min="1" step="1">
     <button type="button" id="conn41Track" disabled onclick="conn41Track()">Перевірити статус у Новій пошті</button>
-    <p class="muted">Тільки читання. Створення чи зміна ТТН не виконуються. Статус замовлення не змінюється автоматично.</p>
+    <button type="button" id="conn41SyncTracking" disabled onclick="conn41SyncTracking()">Синхронізувати статус доставки</button>
     <pre id="conn41TrackingReport" class="ops-json" aria-live="polite"></pre>
    </div>
    <div class="ops-panel">
     <h3>ПриватБанк · звірка IBAN</h3>
     <p id="conn41BankStatus" class="muted" aria-live="polite">API ще не підключено.</p>
+    <button type="button" id="conn41BankCheck" disabled onclick="conn41BankCheck()">Перевірити доступ до Автоклієнта</button>
+    <pre id="conn41BankReport" class="ops-json" aria-live="polite"></pre>
     <p>Для перевірки надходження використовуйте вкладку <strong>«Операції 4.0»</strong> та реальну банківську виписку.</p>
     <p class="muted">Не вводьте токен ПриватБанку у браузері чи чаті. Автоматичні списання та зарахування не активовано.</p>
    </div>
@@ -122,3 +128,4 @@ let promVerified=false;async function promPreview(){const f=$('promfile').files[
 async function promApply(){if(!promVerified)return msg('Спочатку перевір CSV');if(!confirm('Імпортувати товари? Повторний імпорт оновлює існуючі товари.'))return;const fd=new FormData();fd.append('file',$('promfile').files[0]);try{const result=await api('/api/admin/prom/apply',{method:'POST',body:fd});$('promresult').textContent=JSON.stringify(result,null,2);promVerified=false;loadProducts()}catch(e){msg(e.message)}}
 $('promfile').addEventListener('change',()=>promVerified=false);
 </script><script src="/assets/admin-bulk.js"></script><script src="/assets/admin-catalog32.js"></script><script src="/assets/admin-backup.js"></script><script src="/assets/ops40.js"></script><script src="/assets/connectors41.js"></script></body></html>
+
