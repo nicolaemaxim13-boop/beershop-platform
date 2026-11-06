@@ -222,6 +222,11 @@ def setup_ops(app, Base, Order, OrderItem, auth, session):
                 raise HTTPException(409, 'Замовлення вже синхронізоване з іншим ID KeyCRM')
             op.crm_order_id = external
             op.crm_synced_at = utc()
+            # Resolve an ambiguous API dispatch only after an operator confirms CRM existence.
+            dispatch_table = Base.metadata.tables.get('crm_dispatches')
+            if dispatch_table is not None:
+                db.execute(dispatch_table.update().where(dispatch_table.c.order_id == order_id).
+                           values(state='reconciled', external_id=external))
             audit(db, order.id, 'keycrm_export_manually_confirmed', 'External CRM order ID recorded')
             db.commit()
             return public_op(order, op)
@@ -238,3 +243,6 @@ def setup_ops(app, Base, Order, OrderItem, auth, session):
         entries = db.scalars(select(OperationsAudit).where(OperationsAudit.order_id == order_id).
                              order_by(OperationsAudit.id.desc()).limit(100)).all()
         return [{'at': a.at, 'event': a.event, 'note': a.note} for a in entries]
+
+    # Make model classes available to the optional connector layer.
+    return OrderOperations, OperationsAudit
