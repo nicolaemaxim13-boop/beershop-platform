@@ -8,7 +8,7 @@ auth = {'Authorization': 'Bearer ' + 't'*40}
 
 def test_catalog_and_checkout():
     with TestClient(app) as c:
-        assert c.get('/api/health').json()['version'] == '4.1.0'
+        assert c.get('/api/health').json()['version'] == '4.1.1'
         assert c.get('/api/admin/orders').status_code == 401
         category = c.get('/api/categories').json()[0]
         slug = 'test-'+uuid4().hex[:12]
@@ -31,3 +31,4 @@ def test_catalog_and_checkout():
 def test_invalid_stock():
     with TestClient(app) as c:
         assert c.post('/api/orders',json={'request_key':uuid4().hex,'name':'Test Customer','email':'test@example.com','phone':'123456789','delivery_address':'Kyiv office 1','items':[{'variant_id':99999999,'quantity':1}]}).status_code==404
+

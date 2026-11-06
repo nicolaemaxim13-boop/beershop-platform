@@ -6,6 +6,7 @@ Manual confirmations are explicit and audited, not presented as API verification
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
+import re
 from fastapi import Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import String, ForeignKey, Integer, select, func
@@ -118,7 +119,7 @@ def setup_ops(app, Base, Order, OrderItem, auth, session):
                 raise HTTPException(409, 'Скасоване замовлення не можна оплачувати')
             op = get_operation(db, order_id, create=True)
             ref = f'BS-{order.id:06}'
-            if ref not in body.reference.upper():
+            if not re.search(r'(?<![A-Z0-9])'+re.escape(ref)+r'(?![A-Z0-9])', body.reference.upper()):
                 raise HTTPException(409, 'Призначення платежу не містить ' + ref)
             if body.amount != order.total:
                 raise HTTPException(409, 'Сума платежу не збігається з рахунком')
@@ -246,3 +247,4 @@ def setup_ops(app, Base, Order, OrderItem, auth, session):
 
     # Make model classes available to the optional connector layer.
     return OrderOperations, OperationsAudit
+
