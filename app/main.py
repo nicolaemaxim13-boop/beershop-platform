@@ -224,6 +224,9 @@ def fx_context():
                         'checked_at=excluded.checked_at'),
                    {'rate': str(current), 'effective': effective, 'checked': now_text})
         db.commit()
+        # SQL upsert bypasses ORM identity-map invalidation. Reload the row:
+        # the quote and checkout must use the same newly persisted FX rate.
+        db.expire_all()
         return _fx_payload(db.get(FxState, 1), cached=False)
 
 
