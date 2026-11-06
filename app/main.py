@@ -171,7 +171,7 @@ async def lifespan(app):
             cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
     yield
-app = FastAPI(title='BeerShop Platform', version='3.4.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='4.0.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -224,6 +224,9 @@ def fx_context():
                         'checked_at=excluded.checked_at'),
                    {'rate': str(current), 'effective': effective, 'checked': now_text})
         db.commit()
+        # SQL upsert bypasses ORM identity-map invalidation. Reload the row:
+        # the quote and checkout must use the same newly persisted FX rate.
+        db.expire_all()
         return _fx_payload(db.get(FxState, 1), cached=False)
 
 
@@ -268,7 +271,7 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
             'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '3.4.0'}
+def health(): return {'status': 'ok', 'version': '4.0.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -359,6 +362,13 @@ def order_status(order_id: int, data: StatusIn, db: Session = Depends(session)):
         if not o: raise HTTPException(404, 'Order not found')
         if data.status == o.status: return order_dict(db, o)
         if data.status not in allowed[o.status]: raise HTTPException(409, 'Invalid status transition')
+        if data.status == 'fulfilled':
+            if o.payment_status != 'paid':
+                raise HTTPException(409, 'Cannot fulfill an unpaid order')
+            shipment = Base.metadata.tables['order_operations']
+            shipped = db.scalar(select(shipment.c.delivery_status).where(shipment.c.order_id == o.id))
+            if shipped != 'delivered':
+                raise HTTPException(409, 'Cannot fulfill until Nova Poshta delivery is confirmed')
         if data.status == 'cancelled':
             for line in db.scalars(select(OrderItem).where(OrderItem.order_id == o.id)).all():
                 v = db.get(Variant, line.variant_id)
@@ -401,9 +411,9 @@ def set_payment(order_id: int, data: PaymentUpdate, db: Session = Depends(sessio
     if data.payment_status not in {'unpaid', 'paid'}: raise HTTPException(422, 'Invalid payment status')
     o = db.scalar(select(Order).where(Order.id == order_id, Order.store_id == 1))
     if not o: raise HTTPException(404, 'Order not found')
-    if o.status == 'cancelled' and data.payment_status == 'paid': raise HTTPException(409, 'Cancelled order')
-    o.payment_status = data.payment_status
-    db.commit()
+    # No legacy shortcut for marking an order paid without a bank statement.
+    if data.payment_status != o.payment_status:
+        raise HTTPException(409, 'Use /api/admin/ops/orders/{id}/bank-confirm after verifying an actual bank statement. Refunds require a separate controlled workflow.')
     return order_dict(db, o)
 
 @app.post('/api/admin/import/preview', dependencies=[Depends(auth)])
@@ -768,4 +778,14 @@ def backup_js():
 @app.get('/assets/store-fx.js')
 def store_fx_js():
     return FileResponse(ROOT / 'web' / 'store-fx.js', media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+# Register audited operations and their tables before FastAPI startup creates tables.
+from .ops40 import setup_ops
+setup_ops(app, Base, Order, OrderItem, auth, session)
+
+@app.get('/assets/ops40.js')
+def ops40_js():
+    return FileResponse(ROOT / 'web' / 'ops40.js', media_type='application/javascript',
                         headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})

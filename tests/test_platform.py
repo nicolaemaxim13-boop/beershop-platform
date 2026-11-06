@@ -8,7 +8,7 @@ auth = {'Authorization': 'Bearer ' + 't'*40}
 
 def test_catalog_and_checkout():
     with TestClient(app) as c:
-        assert c.get('/api/health').json()['version'] == '3.4.0'
+        assert c.get('/api/health').json()['version'] == '4.0.0'
         assert c.get('/api/admin/orders').status_code == 401
         category = c.get('/api/categories').json()[0]
         slug = 'test-'+uuid4().hex[:12]

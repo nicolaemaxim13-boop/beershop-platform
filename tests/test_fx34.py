@@ -81,3 +81,30 @@ def test_fx_outage_blocks_stale_rates(monkeypatch):
             raise OSError('NBU network unavailable')
         monkeypatch.setattr(main,'fetch_nbu',offline)
         assert c.get('/api/fx/usd-uah').status_code==503
+
+
+def test_fx_refresh_invalidates_identity_map():
+    """When the SQL upsert changes a stale rate, response must use the persisted value."""
+    from datetime import datetime, timezone, timedelta
+    from app.main import FxState, SessionLocal
+    today=datetime.now(timezone.utc)
+    with TestClient(app) as c:
+        with SessionLocal.begin() as db:
+            rate=db.get(FxState,1)
+            if rate is None:
+                rate=FxState(id=1, current_rate=Decimal('51.000000'),
+                             baseline_rate=Decimal('40.000000'),
+                             effective_date=today.date().isoformat(),
+                             checked_at=(today-timedelta(hours=4)).isoformat())
+                db.add(rate)
+            else:
+                rate.current_rate=Decimal('51.000000')
+                rate.checked_at=(today-timedelta(hours=4)).isoformat()
+                rate.effective_date=today.date().isoformat()
+        fetched=c.get('/api/fx/usd-uah')
+        assert fetched.status_code==200, fetched.text
+        assert Decimal(fetched.json()['rate'])==Decimal('40.000000')
+        with SessionLocal() as db:
+            saved=db.get(FxState,1)
+            assert saved.current_rate==Decimal(fetched.json()['rate'])
+            assert saved.checked_at != (today-timedelta(hours=4)).isoformat()
