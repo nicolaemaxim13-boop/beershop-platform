@@ -170,8 +170,10 @@ async def lifespan(app):
             db.flush()
             cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
+    with SessionLocal.begin() as db:
+        crm_backfill(db)
     yield
-app = FastAPI(title='BeerShop Platform', version='4.1.1', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='4.2.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -271,7 +273,7 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
             'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '4.1.1'}
+def health(): return {'status': 'ok', 'version': '4.2.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -346,6 +348,7 @@ def checkout(data: CheckoutIn, db: Session = Depends(session)):
         for line in data.items:
             v = by_id[line.variant_id]; v.stock -= line.quantity
             db.add(OrderItem(order_id=order.id, variant_id=v.id, sku=v.sku, name=names[v.product_id].name, quantity=line.quantity, unit_price=convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate'])))
+        crm_attach_order(db, order)
         db.commit()
         return order_dict(db, order)
     except Exception:
@@ -370,10 +373,17 @@ def order_status(order_id: int, data: StatusIn, db: Session = Depends(session)):
             if shipped != 'delivered':
                 raise HTTPException(409, 'Cannot fulfill until Nova Poshta delivery is confirmed')
         if data.status == 'cancelled':
+            shipment = db.get(OrderOperations, o.id)
+            if o.payment_status == 'paid' or (shipment and shipment.tracking_number):
+                raise HTTPException(409, 'Оплачене замовлення або замовлення з ТТН потребує окремої перевірки повернення. Автоматичне скасування заборонено.')
             for line in db.scalars(select(OrderItem).where(OrderItem.order_id == o.id)).all():
                 v = db.get(Variant, line.variant_id)
                 if v: v.stock += line.quantity
-        o.status = data.status; db.commit(); return order_dict(db, o)
+        previous = o.status
+        o.status = data.status
+        db.add(OperationsAudit(order_id=o.id, event='order_status_changed',
+                               at=datetime.now(timezone.utc).isoformat(), note=previous+' -> '+data.status))
+        db.commit(); return order_dict(db, o)
     except Exception:
         db.rollback(); raise
 @app.get('/api/admin/orders/{order_id}/invoice', dependencies=[Depends(auth)])
@@ -786,6 +796,38 @@ from .ops40 import setup_ops
 OrderOperations, OperationsAudit = setup_ops(app, Base, Order, OrderItem, auth, session)
 from .connectors41 import setup_connectors41
 setup_connectors41(app, Base, Order, OrderItem, OrderOperations, OperationsAudit, auth, session)
+from .crm import setup_crm
+crm_attach_order, crm_backfill = setup_crm(app, Base, Order, OrderItem, OrderOperations,
+                                          OperationsAudit, auth, session, order_dict)
+
+@app.middleware('http')
+async def private_crm_responses(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith('/api/admin/crm') or request.url.path == '/crm':
+        response.headers['Cache-Control'] = 'private, no-store'
+        response.headers['X-Robots-Tag'] = 'noindex, nofollow'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+@app.get('/crm')
+def crm_page():
+    return FileResponse(ROOT / 'web' / 'crm.html')
+
+@app.get('/assets/crm.js')
+def crm_js():
+    return FileResponse(ROOT / 'web' / 'crm.js', media_type='application/javascript', headers={'Cache-Control':'no-store'})
+
+@app.get('/assets/crm.css')
+def crm_css():
+    return FileResponse(ROOT / 'web' / 'crm.css', media_type='text/css', headers={'Cache-Control':'no-store'})
+
+@app.get('/assets/crm-icons/{name}')
+def crm_icon(name: str):
+    allowed = {'store.svg','log-out.svg','refresh-cw.svg','plus.svg','search.svg',
+               'arrow-left.svg','arrow-right.svg','x.svg','clipboard-list.svg','users.svg','pencil.svg'}
+    if name not in allowed:
+        raise HTTPException(404, 'Not found')
+    return FileResponse(ROOT / 'web' / 'crm-icons' / name, media_type='image/svg+xml')
 
 @app.get('/assets/ops40.js')
 def ops40_js():

@@ -46,6 +46,23 @@ def test_existing_target_not_overwritten(tmp_path):
     with pytest.raises(RuntimeError,match='unmarked data'):
         migrate_once(Base.metadata,str(origin.url),target)
 
+def test_pre_crm_source_is_supported_without_changing_catalog(tmp_path):
+    new_tables={'crm_customers','crm_managers','crm_order_details','crm_notes'}
+    source=create_engine('sqlite:///'+str(tmp_path/'pre-crm.db'))
+    Base.metadata.create_all(source,tables=[t for t in Base.metadata.sorted_tables if t.name not in new_tables])
+    target=setup(tmp_path/'crm-target.db')
+    with source.begin() as c:
+        c.execute(Store.__table__.insert(),{'id':1,'slug':'beershop','name':'Shop'})
+        c.execute(Category.__table__.insert(),{'id':1,'store_id':1,'slug':'taps','name':'Taps'})
+        c.execute(Product.__table__.insert(),[{'id':i,'store_id':1,'category_id':1,
+                  'slug':f'item-{i}','name':f'Item {i}','active':i%2==0} for i in range(1,101)])
+        before=c.execute(select(Product.__table__).order_by(Product.id)).all()
+    counts=migrate_once(Base.metadata,str(source.url),target)
+    assert counts['products']==100 and all(counts[t]==0 for t in new_tables)
+    with target.connect() as c:
+        assert c.execute(select(Product.__table__).order_by(Product.id)).all()==before
+    assert migrate_once(Base.metadata,str(source.url),target)==counts
+
 def test_report_and_backup_are_admin_only():
     os.environ['BEERSHOP_ADMIN_TOKEN']='t'*40
     auth={'Authorization':'Bearer '+'t'*40}
@@ -61,3 +78,4 @@ def test_report_and_backup_are_admin_only():
         assert json.loads(res.content)['format']=='beershop-snapshot-v1'
         assert c.get('/assets/admin-backup.js').status_code==200
         assert 'Резервні копії' in c.get('/manage').text
+
