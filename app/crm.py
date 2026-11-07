@@ -55,7 +55,7 @@ class NoteIn(Input):
     request_key: str = Field(min_length=8, max_length=80)
 
 
-def setup_crm(app, Base, Order, OrderItem, Ops, Audit, auth, session, order_dict):
+def setup_crm(app, Base, Order, OrderItem, Ops, Audit, auth, session, order_dict, inventory_order, inventory_backfill):
     class Customer(Base):
         __tablename__ = 'crm_customers'
         id: Mapped[int] = mapped_column(primary_key=True)
@@ -178,11 +178,12 @@ def setup_crm(app, Base, Order, OrderItem, Ops, Audit, auth, session, order_dict
     @router.post('/index-orders')
     def index_orders(db: Session=Depends(session)):
         backfill(db)
+        inventory_backfill(db)
         db.commit()
         return {'status':'ok'}
 
     @router.get('/orders')
-    def orders(q: str=Query('', max_length=100), status: Literal['all','pending','confirmed','fulfilled','cancelled']='all',
+    def orders(q: str=Query('', max_length=100), status: Literal['all','pending','confirmed','picking','fulfilled','cancelled']='all',
                payment: Literal['all','paid','unpaid']='all', manager: str=Query('all', max_length=20),
                priority: Literal['all','low','normal','high']='all', page: int=Query(1, ge=1, le=1000000),
                limit: int=Query(25, ge=1, le=100), db: Session=Depends(session)):
@@ -221,7 +222,7 @@ def setup_crm(app, Base, Order, OrderItem, Ops, Audit, auth, session, order_dict
         for item in result['items']:
             item['image_url'] = images.get(item['variant_id'],'')
         return {**result, **list_row(*row), 'customer':customer_dict(get_customer(db,row[1].customer_id)),
-                'notes':[note_dict(n) for n in notes],
+                'notes':[note_dict(n) for n in notes], 'inventory':inventory_order(db,order_id),
                 'audit':[{'event':a.event, 'at':a.at, 'note':a.note} for a in events]}
 
     @router.patch('/orders/{order_id}')

@@ -47,7 +47,7 @@ def test_existing_target_not_overwritten(tmp_path):
         migrate_once(Base.metadata,str(origin.url),target)
 
 def test_pre_crm_source_is_supported_without_changing_catalog(tmp_path):
-    new_tables={'crm_customers','crm_managers','crm_order_details','crm_notes'}
+    new_tables={'crm_customers','crm_managers','crm_order_details','crm_notes','stock_reservations','stock_movements'}
     source=create_engine('sqlite:///'+str(tmp_path/'pre-crm.db'))
     Base.metadata.create_all(source,tables=[t for t in Base.metadata.sorted_tables if t.name not in new_tables])
     target=setup(tmp_path/'crm-target.db')

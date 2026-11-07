@@ -43,7 +43,8 @@ def migrate_once(metadata, origin_url: str, destination_engine):
                 counts = {}
                 source_tables = set(inspect(source).get_table_names())
                 for table in tables:
-                    if table.name in {'crm_customers','crm_managers','crm_order_details','crm_notes'} and table.name not in source_tables:
+                    if table.name in {'crm_customers','crm_managers','crm_order_details','crm_notes',
+                                      'stock_reservations','stock_movements'} and table.name not in source_tables:
                         counts[table.name] = 0
                         continue
                     rows = [dict(r._mapping) for r in source.execute(select(table)).all()]

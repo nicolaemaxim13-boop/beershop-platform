@@ -10,6 +10,7 @@
   <nav aria-label="Розділи CRM">
    <button data-view="orders" class="tab selected">Замовлення</button>
    <button data-view="customers" class="tab">Клієнти</button>
+   <button data-view="inventory" class="tab">Склад</button>
    <button data-view="managers" class="tab">Відповідальні</button>
   </nav>
   <div class="top-actions"><a href="/manage">Адмінпанель</a><button id="logout" class="icon" title="Вийти" aria-label="Вийти" hidden><img src="/assets/crm-icons/log-out.svg" alt=""></button></div>
@@ -24,13 +25,14 @@
    </form>
   </section>
   <div id="workspace" hidden>
-   <section class="page-head"><div><p class="eyebrow">BEERSHOP / CRM 1.0</p><h1 id="page-title">Замовлення</h1></div>
+   <section class="page-head"><div><p class="eyebrow">BEERSHOP / CRM 1.1</p><h1 id="page-title">Замовлення</h1></div>
     <div class="actions"><button id="refresh" class="icon" title="Оновити" aria-label="Оновити"><img src="/assets/crm-icons/refresh-cw.svg" alt=""></button>
-     <button id="create" class="primary"><img src="/assets/crm-icons/plus.svg" alt=""><span>Нове замовлення</span></button></div></section>
+     <button id="create" class="primary" hidden><img src="/assets/crm-icons/plus.svg" alt=""><span>Новий клієнт</span></button></div></section>
    <section id="summary" class="summary" aria-label="Підсумок"></section>
    <form id="filters" class="filters">
     <div class="search"><img src="/assets/crm-icons/search.svg" alt=""><input id="query" aria-label="Пошук" placeholder="Номер, ім’я, телефон або email" maxlength="100"></div>
-    <select id="status-filter" aria-label="Статус замовлення"><option value="all">Усі статуси</option><option value="pending">Нові</option><option value="confirmed">Підтверджені</option><option value="fulfilled">Виконані</option><option value="cancelled">Скасовані</option></select>
+    <select id="status-filter" aria-label="Статус замовлення"><option value="all">Усі статуси</option><option value="pending">Нові</option><option value="confirmed">Підтверджені</option><option value="picking">Комплектуються</option><option value="fulfilled">Виконані</option><option value="cancelled">Скасовані</option></select>
+    <select id="stock-filter" aria-label="Наявність" hidden><option value="all">Усі залишки</option><option value="available">Доступні</option><option value="reserved">У резерві</option><option value="out">Недоступні</option></select>
     <select id="payment-filter" aria-label="Оплата"><option value="all">Будь-яка оплата</option><option value="unpaid">Не оплачено</option><option value="paid">Оплачено</option></select>
     <select id="manager-filter" aria-label="Відповідальний"><option value="all">Усі відповідальні</option></select>
     <select id="priority-filter" aria-label="Пріоритет"><option value="all">Усі пріоритети</option><option value="high">Високий</option><option value="normal">Звичайний</option><option value="low">Низький</option></select>
