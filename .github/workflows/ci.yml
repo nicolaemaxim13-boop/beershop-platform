@@ -25,3 +25,5 @@ jobs:
       - run: node --check web/ops40.js
       - run: node --check web/store-fx.js
       - run: node --check web/connectors41.js
+      - run: node --check web/crm.js
+

@@ -6,7 +6,7 @@ All copied tables and marker are committed in one destination transaction.
 import json
 import logging
 from datetime import datetime, timezone
-from sqlalchemy import create_engine, text, select, func
+from sqlalchemy import create_engine, text, select, func, inspect
 
 LOG = logging.getLogger('beershop.migration')
 
@@ -41,7 +41,11 @@ def migrate_once(metadata, origin_url: str, destination_engine):
         try:
             with origin_engine.connect() as source:
                 counts = {}
+                source_tables = set(inspect(source).get_table_names())
                 for table in tables:
+                    if table.name in {'crm_customers','crm_managers','crm_order_details','crm_notes'} and table.name not in source_tables:
+                        counts[table.name] = 0
+                        continue
                     rows = [dict(r._mapping) for r in source.execute(select(table)).all()]
                     if rows:
                         target.execute(table.insert(), rows)
@@ -74,3 +78,4 @@ def migrate_once(metadata, origin_url: str, destination_engine):
                 return counts
         finally:
             origin_engine.dispose()
+

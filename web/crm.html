@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="uk">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+ <title>BeerShop CRM</title><link rel="stylesheet" href="/assets/crm.css">
+</head>
+<body>
+ <header class="topbar">
+  <a class="brand" href="/crm"><img src="/assets/crm-icons/store.svg" alt="" width="26" height="26">BeerShop <span>CRM</span></a>
+  <nav aria-label="Розділи CRM">
+   <button data-view="orders" class="tab selected">Замовлення</button>
+   <button data-view="customers" class="tab">Клієнти</button>
+   <button data-view="managers" class="tab">Відповідальні</button>
+  </nav>
+  <div class="top-actions"><a href="/manage">Адмінпанель</a><button id="logout" class="icon" title="Вийти" aria-label="Вийти" hidden><img src="/assets/crm-icons/log-out.svg" alt=""></button></div>
+ </header>
+ <div id="notice" role="status" aria-live="polite" hidden></div>
+ <main>
+  <section id="login" class="login">
+   <p class="eyebrow">BEERSHOP CRM</p><h1>Вхід адміністратора</h1>
+   <form id="login-form"><label for="admin-token">Токен адміністратора</label>
+    <input id="admin-token" type="password" autocomplete="off" required minlength="32">
+    <button class="primary" type="submit">Увійти</button>
+   </form>
+  </section>
+  <div id="workspace" hidden>
+   <section class="page-head"><div><p class="eyebrow">BEERSHOP / CRM 1.0</p><h1 id="page-title">Замовлення</h1></div>
+    <div class="actions"><button id="refresh" class="icon" title="Оновити" aria-label="Оновити"><img src="/assets/crm-icons/refresh-cw.svg" alt=""></button>
+     <button id="create" class="primary"><img src="/assets/crm-icons/plus.svg" alt=""><span>Нове замовлення</span></button></div></section>
+   <section id="summary" class="summary" aria-label="Підсумок"></section>
+   <form id="filters" class="filters">
+    <div class="search"><img src="/assets/crm-icons/search.svg" alt=""><input id="query" aria-label="Пошук" placeholder="Номер, ім’я, телефон або email" maxlength="100"></div>
+    <select id="status-filter" aria-label="Статус замовлення"><option value="all">Усі статуси</option><option value="pending">Нові</option><option value="confirmed">Підтверджені</option><option value="fulfilled">Виконані</option><option value="cancelled">Скасовані</option></select>
+    <select id="payment-filter" aria-label="Оплата"><option value="all">Будь-яка оплата</option><option value="unpaid">Не оплачено</option><option value="paid">Оплачено</option></select>
+    <select id="manager-filter" aria-label="Відповідальний"><option value="all">Усі відповідальні</option></select>
+    <select id="priority-filter" aria-label="Пріоритет"><option value="all">Усі пріоритети</option><option value="high">Високий</option><option value="normal">Звичайний</option><option value="low">Низький</option></select>
+    <button class="secondary" type="submit">Знайти</button>
+   </form>
+   <div class="list-meta"><span id="result-count"></span><span id="loading" role="status" hidden>Завантаження...</span></div>
+   <section id="list" aria-label="Результати"></section>
+   <footer id="pagination" class="pagination"><button id="prev" class="icon" title="Попередня сторінка" aria-label="Попередня сторінка"><img src="/assets/crm-icons/arrow-left.svg" alt=""></button><span id="page-number"></span><button id="next" class="icon" title="Наступна сторінка" aria-label="Наступна сторінка"><img src="/assets/crm-icons/arrow-right.svg" alt=""></button></footer>
+  </div>
+ </main>
+ <dialog id="detail" class="drawer" aria-labelledby="detail-title"><header class="drawer-head"><h2 id="detail-title"></h2><button class="icon" data-close="detail" title="Закрити" aria-label="Закрити картку"><img src="/assets/crm-icons/x.svg" alt=""></button></header><div id="detail-body"></div></dialog>
+ <dialog id="editor" class="editor" aria-labelledby="editor-title"><header class="drawer-head"><h2 id="editor-title"></h2><button class="icon" data-close="editor" title="Закрити" aria-label="Закрити форму"><img src="/assets/crm-icons/x.svg" alt=""></button></header><form id="editor-form"></form></dialog>
+ <script src="/assets/crm.js" defer></script>
+</body></html>
