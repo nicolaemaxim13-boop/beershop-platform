@@ -62,7 +62,7 @@ fieldset {
   flex: none;
 }
 dialog #notice {
-  left: 16px;
+  left: auto;
   right: 16px;
   transform: none;
   max-width: calc(100% - 32px);

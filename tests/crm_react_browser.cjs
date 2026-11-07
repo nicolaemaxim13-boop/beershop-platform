@@ -44,7 +44,7 @@ const stock={variant_id:1,product_id:1,name:'Fixture stock',sku:'TEST-1',image_u
   });
   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
   const login=async()=>{await page.locator('#admin-token').fill('t'.repeat(40));await page.locator('#login-form button').click();await page.locator('#list [data-action="order"]').waitFor()};
-  await page.goto('/crm');await login();
+  await page.goto('/crm/');await login();
   await page.locator('#next').click();
   await page.waitForFunction(()=>document.querySelector('#page-number')?.textContent==='2 / 2');
   assert(requests.some(r=>r.path.endsWith('/orders')&&new URLSearchParams(r.query).get('page')==='2'));

@@ -24,7 +24,10 @@ assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test s
   const variant=await request('POST',`/api/admin/products/${product.id}/variants`,{sku:'CRM-'+stamp,price:'250.00',stock:10,currency:'UAH'});
   await page.goto('/');
   await page.locator('#cards .card').first().waitFor();
+  const searched=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/products'&&new URL(r.url()).searchParams.get('q')==='Тестовий пивний кран');
   await page.locator('#search').fill('Тестовий пивний кран');
+  await (await searched).finished();
+  await page.waitForFunction(id=>products.some(p=>p.id===id),product.id);
   await page.locator(`button[onclick="add(${product.id})"]`).click();
   await page.locator('header button').click();
   await page.locator('#checkout [name=name]').fill('Тестовий покупець');
