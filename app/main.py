@@ -18,6 +18,7 @@ from typing import Annotated, Literal
 from uuid import uuid4
 from fastapi import FastAPI, Depends, Header, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import create_engine, String, Integer, Numeric, Boolean, ForeignKey, UniqueConstraint, select, text, func
@@ -174,7 +175,7 @@ async def lifespan(app):
         crm_backfill(db)
         inventory_backfill(db)
     yield
-app = FastAPI(title='BeerShop Platform', version='4.3.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='4.4.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -274,7 +275,7 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
             'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '4.3.0'}
+def health(): return {'status': 'ok', 'version': '4.4.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -818,14 +819,24 @@ crm_attach_order, crm_backfill = setup_crm(app, Base, Order, OrderItem, OrderOpe
 @app.middleware('http')
 async def private_crm_responses(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(('/api/admin/crm','/api/admin/inventory')) or request.url.path == '/crm':
+    if request.url.path.startswith(('/api/admin/crm','/api/admin/inventory','/crm/')) or request.url.path in {'/crm','/crm-legacy'}:
         response.headers['Cache-Control'] = 'private, no-store'
         response.headers['X-Robots-Tag'] = 'noindex, nofollow'
         response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
 
 @app.get('/crm')
+@app.get('/crm/', include_in_schema=False)
 def crm_page():
+    index = ROOT / 'web' / 'crm-dist' / 'index.html'
+    if not index.is_file():
+        raise HTTPException(503, 'CRM frontend is not built. Run npm ci and npm run build in frontend/.')
+    return FileResponse(index)
+
+app.mount('/crm/assets', StaticFiles(directory=ROOT / 'web' / 'crm-dist' / 'assets', check_dir=False), name='crm-assets')
+
+@app.get('/crm-legacy', include_in_schema=False)
+def crm_legacy_page():
     return FileResponse(ROOT / 'web' / 'crm.html')
 
 @app.get('/assets/crm.js')
