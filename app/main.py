@@ -172,8 +172,9 @@ async def lifespan(app):
             for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
     with SessionLocal.begin() as db:
         crm_backfill(db)
+        inventory_backfill(db)
     yield
-app = FastAPI(title='BeerShop Platform', version='4.2.0', lifespan=lifespan)
+app = FastAPI(title='BeerShop Platform', version='4.3.0', lifespan=lifespan)
 
 def session():
     with SessionLocal() as db: yield db
@@ -273,7 +274,7 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
             'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
 
 @app.get('/api/health')
-def health(): return {'status': 'ok', 'version': '4.2.0'}
+def health(): return {'status': 'ok', 'version': '4.3.0'}
 @app.get('/api/categories')
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
@@ -317,11 +318,13 @@ def add_variant(product_id: int, data: VariantIn, db: Session = Depends(session)
     return variant_dict(v)
 @app.patch('/api/admin/variants/{variant_id}', dependencies=[Depends(auth)])
 def update_variant(variant_id: int, data: VariantUpdate, db: Session = Depends(session)):
-    v = db.get(Variant, variant_id)
+    if db.bind.dialect.name == 'sqlite': db.execute(text('BEGIN IMMEDIATE'))
+    v = db.scalar(select(Variant).where(Variant.id == variant_id,Variant.store_id == 1).with_for_update())
     if not v or v.store_id != 1: raise HTTPException(404, 'Variant not found')
     for k, value in data.model_dump(exclude_unset=True).items():
         if value is None: raise HTTPException(422, 'Null not allowed')
-        setattr(v, k, value)
+        if k == 'stock': inventory_set_available(db,v,value,'Catalog editor: available stock')
+        else: setattr(v, k, value)
     db.commit(); return variant_dict(v)
 @app.post('/api/orders', status_code=201)
 def checkout(data: CheckoutIn, db: Session = Depends(session)):
@@ -349,6 +352,7 @@ def checkout(data: CheckoutIn, db: Session = Depends(session)):
             v = by_id[line.variant_id]; v.stock -= line.quantity
             db.add(OrderItem(order_id=order.id, variant_id=v.id, sku=v.sku, name=names[v.product_id].name, quantity=line.quantity, unit_price=convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate'])))
         crm_attach_order(db, order)
+        inventory_reserve(db, order)
         db.commit()
         return order_dict(db, order)
     except Exception:
@@ -358,13 +362,16 @@ def admin_orders(db: Session = Depends(session)):
     return [order_dict(db, o) for o in db.scalars(select(Order).where(Order.store_id == 1).order_by(Order.id.desc()).limit(100)).all()]
 @app.patch('/api/admin/orders/{order_id}/status', dependencies=[Depends(auth)])
 def order_status(order_id: int, data: StatusIn, db: Session = Depends(session)):
-    allowed = {'pending': {'confirmed', 'cancelled'}, 'confirmed': {'fulfilled', 'cancelled'}, 'fulfilled': set(), 'cancelled': set()}
+    allowed = {'pending': {'confirmed', 'cancelled'}, 'confirmed': {'picking', 'cancelled'},
+               'picking': {'fulfilled', 'cancelled'}, 'fulfilled': set(), 'cancelled': set()}
     try:
         if db.bind.dialect.name == 'sqlite': db.execute(text('BEGIN IMMEDIATE'))
         o = db.scalar(select(Order).where(Order.id == order_id, Order.store_id == 1).with_for_update())
         if not o: raise HTTPException(404, 'Order not found')
         if data.status == o.status: return order_dict(db, o)
         if data.status not in allowed[o.status]: raise HTTPException(409, 'Invalid status transition')
+        if data.status == 'picking' and o.payment_status != 'paid':
+            raise HTTPException(409, 'Комплектування потребує підтвердженої оплати')
         if data.status == 'fulfilled':
             if o.payment_status != 'paid':
                 raise HTTPException(409, 'Cannot fulfill an unpaid order')
@@ -372,13 +379,12 @@ def order_status(order_id: int, data: StatusIn, db: Session = Depends(session)):
             shipped = db.scalar(select(shipment.c.delivery_status).where(shipment.c.order_id == o.id))
             if shipped != 'delivered':
                 raise HTTPException(409, 'Cannot fulfill until Nova Poshta delivery is confirmed')
+            inventory_ship(db,o)
         if data.status == 'cancelled':
             shipment = db.get(OrderOperations, o.id)
             if o.payment_status == 'paid' or (shipment and shipment.tracking_number):
                 raise HTTPException(409, 'Оплачене замовлення або замовлення з ТТН потребує окремої перевірки повернення. Автоматичне скасування заборонено.')
-            for line in db.scalars(select(OrderItem).where(OrderItem.order_id == o.id)).all():
-                v = db.get(Variant, line.variant_id)
-                if v: v.stock += line.quantity
+            inventory_release(db,o)
         previous = o.status
         o.status = data.status
         db.add(OperationsAudit(order_id=o.id, event='order_status_changed',
@@ -668,6 +674,9 @@ def _bulk_process(payload: BulkRequest, db: Session, apply: bool):
             for field in ('product_active', 'variant_active', 'price', 'currency', 'stock'):
                 value = getattr(entry, field)
                 if value is not None:
+                    if field == 'stock':
+                        inventory_set_available(db,v,value,'Bulk editor: available stock')
+                        continue
                     target = p if field == 'product_active' else v
                     setattr(target, 'active' if field in ('product_active', 'variant_active') else field, value)
         db.commit()
@@ -793,17 +802,23 @@ def store_fx_js():
 
 # Register audited operations and their tables before FastAPI startup creates tables.
 from .ops40 import setup_ops
-OrderOperations, OperationsAudit = setup_ops(app, Base, Order, OrderItem, auth, session)
+OrderOperations, OperationsAudit = setup_ops(app, Base, Order, OrderItem, auth, session,
+                                             lambda db,order: inventory_ship(db,order))
 from .connectors41 import setup_connectors41
-setup_connectors41(app, Base, Order, OrderItem, OrderOperations, OperationsAudit, auth, session)
+setup_connectors41(app, Base, Order, OrderItem, OrderOperations, OperationsAudit, auth, session,
+                   lambda db,order: inventory_ship(db,order))
+from .inventory import setup_inventory
+(inventory_reserve,inventory_release,inventory_ship,inventory_backfill,
+ inventory_order,inventory_set_available) = setup_inventory(
+    app,Base,Order,OrderItem,Variant,Product,OrderOperations,OperationsAudit,auth,session)
 from .crm import setup_crm
 crm_attach_order, crm_backfill = setup_crm(app, Base, Order, OrderItem, OrderOperations,
-                                          OperationsAudit, auth, session, order_dict)
+                                          OperationsAudit, auth, session, order_dict,inventory_order,inventory_backfill)
 
 @app.middleware('http')
 async def private_crm_responses(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith('/api/admin/crm') or request.url.path == '/crm':
+    if request.url.path.startswith(('/api/admin/crm','/api/admin/inventory')) or request.url.path == '/crm':
         response.headers['Cache-Control'] = 'private, no-store'
         response.headers['X-Robots-Tag'] = 'noindex, nofollow'
         response.headers['X-Content-Type-Options'] = 'nosniff'

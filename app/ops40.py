@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column, Session
 
 
-def setup_ops(app, Base, Order, OrderItem, auth, session):
+def setup_ops(app, Base, Order, OrderItem, auth, session, on_handover):
     class OrderOperations(Base):
         __tablename__ = 'order_operations'
         order_id: Mapped[int] = mapped_column(ForeignKey('orders.id'), primary_key=True)
@@ -183,6 +183,7 @@ def setup_ops(app, Base, Order, OrderItem, auth, session):
                 return public_op(order, op)
             if allowed.get(op.delivery_status) != body.status:
                 raise HTTPException(409, 'Неприпустимий перехід статусу доставки')
+            on_handover(db,order)
             op.delivery_status = body.status
             op.delivery_updated_at = utc()
             audit(db, order.id, 'nova_poshta_status_manually_confirmed', body.status)

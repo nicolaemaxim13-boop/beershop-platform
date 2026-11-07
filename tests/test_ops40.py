@@ -96,6 +96,8 @@ def test_manual_operations_have_audit_idempotency_and_guards():
         assert client.patch(f'/api/admin/orders/{oid}/status',headers=AUTH,
                             json={'status':'confirmed'}).status_code==200
         assert client.patch(f'/api/admin/orders/{oid}/status',headers=AUTH,
+                            json={'status':'picking'}).status_code==200
+        assert client.patch(f'/api/admin/orders/{oid}/status',headers=AUTH,
                             json={'status':'fulfilled'}).status_code==200
         trail=client.get(f'/api/admin/ops/orders/{oid}/audit',headers=AUTH)
         assert trail.status_code==200 and len(trail.json())>=5
@@ -104,3 +106,4 @@ def test_manual_operations_have_audit_idempotency_and_guards():
         assert any(o['id']==oid and o['crm_synced'] and o['bank_confirmed'] for o in ops.json())
         assert client.get('/assets/ops40.js').status_code==200
         assert 'Операції 4.0' in client.get('/manage').text
+

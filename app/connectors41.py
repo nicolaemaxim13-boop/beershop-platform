@@ -162,7 +162,7 @@ def build_keycrm_payload(order, lines, source_id):
     }
 
 
-def setup_connectors41(app, Base, Order, OrderItem, Ops, Audit, auth, session):
+def setup_connectors41(app, Base, Order, OrderItem, Ops, Audit, auth, session, on_handover):
     class CrmDispatch(Base):
         __tablename__ = 'crm_dispatches'
         order_id: Mapped[int] = mapped_column(ForeignKey('orders.id'), primary_key=True)
@@ -356,6 +356,8 @@ def setup_connectors41(app, Base, Order, OrderItem, Ops, Audit, auth, session):
         previous = op.delivery_status
         applicable = mapped is not None and ranks.get(mapped, -1) >= ranks.get(previous, 99)
         if applicable:
+            if mapped in {'handed_over','delivered'}:
+                on_handover(db,order)
             op.delivery_status = mapped
             op.delivery_updated_at = utc()
         state = {'status_code':data['status_code'], 'delivery_status':op.delivery_status,
