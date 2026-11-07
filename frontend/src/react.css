@@ -1,0 +1,84 @@
+button svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.brand svg {
+  flex: none;
+}
+.search svg {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 17px;
+  height: 17px;
+  opacity: 0.5;
+}
+.empty > svg {
+  width: 35px;
+  height: 35px;
+  opacity: 0.35;
+  margin-bottom: 14px;
+}
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.wide {
+  width: 100%;
+}
+.error-panel {
+  padding: 12px 16px;
+  border-left: 3px solid #a23942;
+  background: #fff2f3;
+  margin: 12px 0;
+  color: #912b38;
+  overflow-wrap: anywhere;
+}
+.error-panel p {
+  margin: 0 0 8px;
+}
+.summary {
+  min-height: 96px;
+}
+.list-meta {
+  min-height: 22px;
+}
+.page-head .primary {
+  min-width: 150px;
+}
+.item {
+  flex-wrap: wrap;
+}
+.item-main {
+  min-width: 120px !important;
+}
+.detail-top {
+  flex-wrap: wrap;
+}
+.drawer-head > .actions {
+  flex: none;
+}
+dialog #notice {
+  left: auto;
+  right: 16px;
+  transform: none;
+  max-width: calc(100% - 32px);
+}
+.table-wrap .cell-title {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .summary {
+    min-height: 100px;
+  }
+  .page-head .primary {
+    min-width: 0;
+  }
+  .topbar .brand {
+    white-space: normal;
+  }
+}

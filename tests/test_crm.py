@@ -184,6 +184,18 @@ def test_crm_assets_and_entry(client):
     response=client.get('/crm')
     assert response.status_code==200 and response.headers['cache-control']=='private, no-store'
     assert 'BeerShop CRM' in response.text
+    assert 'id="root"' in response.text
+    assert '/crm/assets/' in response.text
+    assert client.get('/crm/').status_code==200
+    legacy=client.get('/crm-legacy')
+    assert legacy.status_code==200 and 'id="login-form"' in legacy.text
+    assert legacy.headers['cache-control']=='private, no-store'
+    import re
+    for asset in re.findall(r'(?:src|href)="(/crm/assets/[^"]+)"',response.text):
+        bundle=client.get(asset)
+        assert bundle.status_code==200
+        assert bundle.headers['x-content-type-options']=='nosniff'
+    assert client.get('/crm/assets/does-not-exist.js').status_code==404
     assert 'href="/crm"' in client.get('/manage').text
     for path in ['/assets/crm.js','/assets/crm.css','/assets/crm-icons/store.svg']:
         assert client.get(path).status_code==200

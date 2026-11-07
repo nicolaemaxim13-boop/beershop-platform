@@ -1,5 +1,5 @@
 // Run against an isolated, empty local DB with a deterministic FX stub.
-const {chromium} = require('playwright');
+const {chromium} = require('../frontend/node_modules/playwright');
 const assert = require('node:assert/strict');
 const baseURL = process.env.CRM_TEST_URL || 'http://127.0.0.1:8018';
 const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
@@ -7,7 +7,7 @@ const origin = new URL(baseURL);
 assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test server is allowed');
 
 (async()=>{
- const browser = await chromium.launch({headless:true,executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',args:['--no-sandbox']});
+ const browser = await chromium.launch({headless:true,...(process.env.CHROMIUM_PATH ? {executablePath:process.env.CHROMIUM_PATH} : {}),args:['--no-sandbox']});
  try {
   const context = await browser.newContext({baseURL,viewport:{width:1366,height:900}});
   await context.route('**/*',route=>new URL(route.request().url()).origin===origin.origin?route.continue():route.abort());
@@ -23,7 +23,11 @@ assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test s
   const product=await request('POST','/api/admin/products',{name:'Тестовий пивний кран',slug:'crm-browser-'+stamp,category_id:categories[0].id,image_url:'/assets/crm-icons/store.svg'});
   const variant=await request('POST',`/api/admin/products/${product.id}/variants`,{sku:'CRM-'+stamp,price:'250.00',stock:10,currency:'UAH'});
   await page.goto('/');
+  await page.locator('#cards .card').first().waitFor();
+  const searched=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/products'&&new URL(r.url()).searchParams.get('q')==='Тестовий пивний кран');
   await page.locator('#search').fill('Тестовий пивний кран');
+  await (await searched).finished();
+  await page.waitForFunction(id=>products.some(p=>p.id===id),product.id);
   await page.locator(`button[onclick="add(${product.id})"]`).click();
   await page.locator('header button').click();
   await page.locator('#checkout [name=name]').fill('Тестовий покупець');
@@ -32,7 +36,11 @@ assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test s
   await page.locator('#checkout [name=delivery_address]').fill('Тестове місто, відділення 1');
   const created=page.waitForResponse(r=>r.url().endsWith('/api/orders')&&r.request().method()==='POST');
   await page.locator('#orderbtn').click();
-  const checkout=await created;assert.equal(checkout.status(),201);
+  const checkout=await created.catch(async error=>{
+   await page.screenshot({path:'/tmp/crm-checkout-failure.png',fullPage:true});
+   console.error('Checkout diagnostic:',await page.locator('#message').textContent(),errors);
+   throw error;
+  });assert.equal(checkout.status(),201);
   const placed=await checkout.json();
   const reserved=await request('GET','/api/admin/inventory/'+variant.id);
   assert.deepEqual([reserved.available,reserved.reserved,reserved.on_hand],[9,1,10]);
@@ -50,6 +58,7 @@ assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test s
   assert(await page.locator('#create').isHidden());
   await page.locator(`#list [data-action="order"][data-id="${placed.id}"]`).click();
   await page.locator('#detail').waitFor({state:'visible'});
+  await page.locator('#assignment-form').waitFor();
   const invoice=await page.locator('#detail-title').textContent();
   assert.match(invoice,/BS-\d+/);
   assert(await page.locator('[data-status="fulfilled"]').isDisabled());
@@ -92,6 +101,7 @@ assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test s
   }
   await page.locator('[data-status="fulfilled"]').click();
   await page.waitForFunction(()=>document.querySelector('#detail .badge.fulfilled'));
+  assert.equal(await page.locator('#assigned option:checked').textContent(),'Тестовий менеджер '+stamp);
   const shipped=await request('GET','/api/admin/inventory/'+variant.id);
   assert.deepEqual([shipped.available,shipped.reserved,shipped.on_hand],[9,0,9]);
   await page.screenshot({path:'/tmp/crm-order-desktop.png',fullPage:true});
@@ -100,6 +110,7 @@ assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test s
   await page.locator('#contact-name').fill('Тестовий клієнт з оновленим іменем');
   await page.locator('#save-edit').click();
   await page.locator('#editor').waitFor({state:'hidden'});
+  await page.waitForFunction(()=>document.querySelector('#detail-title')?.textContent==='Тестовий клієнт з оновленим іменем');
   assert.equal(await page.locator('#detail-title').textContent(),'Тестовий клієнт з оновленим іменем');
   await page.locator('[data-close="detail"]').click();
   await page.locator('#query').fill(email);

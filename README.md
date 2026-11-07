@@ -1,6 +1,8 @@
-# BeerShop 4.3: власна CRM 1.1 і склад
+# BeerShop 4.4: власна CRM 1.2 на React
 
 Робоча область: `/crm`. Замовлення надходять лише з власної вітрини; ручне створення в CRM прибрано. Додано окремий складський резерв, журнал рухів, перерахунок та етап «Комплектується». Клієнти, відповідальні, нотатки, контрольовані ручні оплати й доставка збережені. Докладно: [CRM_UA.md](CRM_UA.md). WordPress/WooCommerce не використовуються, KeyCRM не потрібна. Персональні акаунти й ролі ще не реалізовані; система залишається preview.
+
+CRM перенесено на React + TypeScript + Vite (`frontend/`). Вітрина, Python/FastAPI, SQLAlchemy та PostgreSQL залишаються без зміни бізнес-логіки. Збірку віддає той самий Python-сервер; додатковий Node-сервер чи платний сервіс не потрібен. Попередній інтерфейс доступний у `/crm-legacy`. Опис розробки: [frontend/README.md](frontend/README.md).
 
 Нижче збережено історичні описи попередніх випусків; поточні інтеграційні обмеження див. також у [INTEGRATIONS_UA.md](INTEGRATIONS_UA.md).
 
@@ -12,6 +14,8 @@
 
 ```bash
 pip install -r requirements.txt
+npm ci --prefix frontend
+npm run build --prefix frontend
 export BEERSHOP_ADMIN_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(40))')"
 uvicorn app.main:app --reload
 ```
