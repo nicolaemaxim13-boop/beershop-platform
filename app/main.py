@@ -334,7 +334,18 @@ def checkout(data: CheckoutIn, db: Session = Depends(session)):
     try:
         if db.bind.dialect.name == 'sqlite': db.execute(text('BEGIN IMMEDIATE'))
         existing = db.scalar(select(Order).where(Order.store_id == 1, Order.request_key == data.request_key))
-        if existing: return order_dict(db, existing)
+        if existing:
+            # The public checkout endpoint must not disclose another order's
+            # contact/delivery data when a request key is reused with new input.
+            previous_lines = db.scalars(select(OrderItem).where(OrderItem.order_id == existing.id)).all()
+            previous_items = {line.variant_id: line.quantity for line in previous_lines}
+            requested_items = {line.variant_id: line.quantity for line in data.items}
+            same_buyer = all(getattr(existing, field) == getattr(data, field)
+                             for field in ('name', 'email', 'phone', 'delivery_address'))
+            same_total = data.expected_total is None or data.expected_total == existing.total
+            if not (same_buyer and previous_items == requested_items and same_total):
+                raise HTTPException(409, 'Ключ запиту вже використаний для іншого замовлення')
+            return order_dict(db, existing)
         ids = [x.variant_id for x in data.items]
         variants = db.scalars(select(Variant).where(Variant.store_id == 1, Variant.id.in_(ids)).order_by(Variant.id).with_for_update()).all()
         by_id = {v.id: v for v in variants}
