@@ -45,6 +45,20 @@ const stock={variant_id:1,product_id:1,name:'Fixture stock',sku:'TEST-1',image_u
   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
   const login=async()=>{await page.locator('#admin-token').fill('t'.repeat(40));await page.locator('#login-form button').click();await page.locator('#list [data-action="order"]').waitFor()};
   await page.goto('/crm/');await login();
+  // Mobile cards, tablet filters, desktop tables and widescreen should never overflow.
+  for(const width of [320,360,390,600,768,1024,1366,1920]){
+   await page.setViewportSize({width,height:844});
+   await page.locator('#list [data-action="order"]').waitFor();
+   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth);
+   assert(overflow<=1,'CRM horizontal overflow at '+width+': '+overflow);
+   if(width<=600){
+    const table=page.locator('#list .responsive-table');
+    assert(await table.isVisible(),'Responsive table is not visible at '+width);
+    assert(await table.locator('tbody tr').first().isVisible(),'Order card missing at '+width);
+   }
+   if([320,390,768,1366].includes(width))await page.screenshot({path:'/tmp/beershop-crm-'+width+'.png',fullPage:true});
+  }
+  await page.setViewportSize({width:1366,height:900});
   await page.locator('#next').click();
   await page.waitForFunction(()=>document.querySelector('#page-number')?.textContent==='2 / 2');
   assert(requests.some(r=>r.path.endsWith('/orders')&&new URLSearchParams(r.query).get('page')==='2'));
