@@ -800,6 +800,16 @@ def store_fx_js():
     return FileResponse(ROOT / 'web' / 'store-fx.js', media_type='application/javascript',
                         headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
 
+@app.get('/assets/store-media.js')
+def store_media_js():
+    return FileResponse(ROOT / 'web' / 'store-media.js', media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+@app.get('/assets/store-media.css')
+def store_media_css():
+    return FileResponse(ROOT / 'web' / 'store-media.css', media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
 
 # Register audited operations and their tables before FastAPI startup creates tables.
 from .ops40 import setup_ops
