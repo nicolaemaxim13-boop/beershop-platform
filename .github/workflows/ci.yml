@@ -43,6 +43,7 @@ jobs:
           path: |
             /tmp/crm-*.png
             /tmp/inventory-*.png
+            /tmp/beershop-*.png
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 15
