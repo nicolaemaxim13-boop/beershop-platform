@@ -211,6 +211,7 @@ function Workspace({ api, logout }: { api: ApiClient; logout: () => void }) {
   const total = list.data?.total || 0;
   return (
     <>
+      <a className="skip-link" href="#list">До списку результатів</a>
       <Header view={view} select={select} logout={logout} />
       <main>
         <div id="workspace">
