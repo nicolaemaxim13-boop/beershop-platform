@@ -156,3 +156,28 @@ def test_auth_lockout_and_key_rotation_fail_closed(staff_env):
             'username':name,'password':STRONG,'otp':valid})
         assert res.status_code==503
         assert 'secret' not in res.text.lower()
+
+
+
+def test_staff_ui_disabled_by_default_and_secure_when_enabled(staff_env):
+    staff_env.delenv('BEERSHOP_V9_STAFF_AUTH', raising=False)
+    with TestClient(main.app) as c:
+        assert c.get('/staff-v9').status_code == 503
+        assert c.get('/assets/staff-v9.js').status_code == 503
+        assert c.get('/assets/staff-v9.css').status_code == 503
+    staff_env.setenv('BEERSHOP_V9_STAFF_AUTH', '1')
+    with TestClient(main.app) as c:
+        page=c.get('/staff-v9')
+        assert page.status_code == 200
+        assert 'Персональний вхід співробітника' in page.text
+        assert page.headers['cache-control'] == 'private, no-store'
+        assert page.headers['x-frame-options'] == 'DENY'
+        assert "default-src 'none'" in page.headers['content-security-policy']
+        assert "script-src 'self'" in page.headers['content-security-policy']
+        assert "frame-ancestors 'none'" in page.headers['content-security-policy']
+        for asset,media in (('staff-v9.js','javascript'),('staff-v9.css','css')):
+            result=c.get('/assets/'+asset)
+            assert result.status_code == 200
+            assert media in result.headers['content-type']
+            assert result.headers['cache-control'] == 'no-store'
+        assert 'localStorage' not in c.get('/assets/staff-v9.js').text
