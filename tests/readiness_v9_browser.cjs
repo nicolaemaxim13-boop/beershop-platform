@@ -23,8 +23,9 @@ const token=process.env.CRM_TEST_TOKEN||'t'.repeat(40);
      await page.locator('#token').fill(token);
      await page.getByRole('button',{name:'Підключитися'}).click();
      await page.getByRole('button',{name:'Готовність v9'}).click();
-     const status=page.locator('#readiness9-status');
-     await status.getByText('НЕ ГОТОВО',{exact:false}).waitFor({timeout:12000});
+     await page.waitForFunction(() =>
+       document.querySelector('#readiness9-status')?.textContent.includes('НЕ ГОТОВО'),
+       null, {timeout:12000});
      assert(await page.locator('#readiness9-metrics .readiness-metric').count()>=5);
      assert(await page.locator('.readiness-check.block').count()>=3);
      assert((await page.locator('#readiness9-checks').textContent()).includes('IBAN'));
