@@ -35,6 +35,9 @@ jobs:
       - run: node --check web/pricing-admin.js
       - run: node --check web/storefront-v5.js
       - run: node --check web/storefront-v7.js
+      - run: node --check web/admin-gallery-v8.js
+      - run: node --check web/admin-catalog32.js
+      - run: node --check tests/gallery_v8_browser.cjs
       - run: node --check web/connectors41.js
       - run: node --check web/crm.js
       - run: npx --prefix frontend playwright install --with-deps chromium
