@@ -46,7 +46,9 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
     await page.goto('/');
     await page.locator('#search').fill('V5 Fixture');
     await page.waitForFunction(() =>
-      [...document.querySelectorAll('#cards .card')].length >= 2
+      document.querySelector('#results-status')?.getAttribute('aria-busy') === 'false' &&
+      document.querySelector('#results-status')?.textContent.includes('пошук: «V5 Fixture»') &&
+      [...document.querySelectorAll('#cards .card')].length === 2
     );
     const priceA = page.locator('.card').filter({hasText: available.product.name});
     const priceB = page.locator('.card').filter({hasText: unavailable.product.name});
