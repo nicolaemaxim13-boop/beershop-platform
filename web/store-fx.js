@@ -34,8 +34,14 @@ placeOrder=async function(e){
     const orderResp=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     const order=await orderResp.json();
     if(!orderResp.ok)throw Error(order.detail || 'Помилка замовлення');
-    cart={};pendingKey=null;renderCart();toggleCart();e.target.reset();
-    msg('Замовлення №'+order.id+' створено на суму '+fmt(Number(order.total))+'. Менеджер зв’яжеться з вами.');
+    cart={};pendingKey=null;renderCart();toggleCart(false);e.target.reset();
+    const confirmation=document.getElementById('checkout-confirmation');
+    if(confirmation){
+      confirmation.textContent='Замовлення №'+order.id+' прийнято на суму '+fmt(Number(order.total))+'. Менеджер зв’яжеться з вами. Оплата ще не підтверджена.';
+      confirmation.classList.remove('hidden');
+      confirmation.scrollIntoView({block:'start',behavior:'auto'});
+    }
+    msg('Замовлення №'+order.id+' створено. Менеджер зв’яжеться з вами.');
     reload();
   }catch(error){msg(error.message)}finally{btn.disabled=false}
 };

@@ -32,6 +32,7 @@ jobs:
       - run: pytest -q
       - run: node --check web/ops40.js
       - run: node --check web/store-fx.js
+      - run: node --check web/storefront-v5.js
       - run: node --check web/connectors41.js
       - run: node --check web/crm.js
       - run: npx --prefix frontend playwright install --with-deps chromium

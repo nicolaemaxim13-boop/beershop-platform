@@ -280,13 +280,17 @@ def health(): return {'status': 'ok', 'version': '4.4.0'}
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
 @app.get('/api/products')
-def products(q: str = Query('', max_length=100), category: str = Query('', max_length=90), page: int = Query(1, ge=1), limit: int = Query(12, ge=1, le=50), db: Session = Depends(session)):
+def products(q: str = Query('', max_length=100), category: str = Query('', max_length=90), in_stock: bool = False, page: int = Query(1, ge=1), limit: int = Query(12, ge=1, le=50), db: Session = Depends(session)):
     stmt = select(Product).where(Product.store_id == 1, Product.active.is_(True))
     if q: stmt = stmt.where(Product.name.ilike('%' + q.replace('%', r'\%').replace('_', r'\_') + '%', escape='\\'))
     if category:
         cat = db.scalar(select(Category).where(Category.store_id == 1, Category.slug == category))
         if not cat: return {'items': [], 'total': 0, 'page': page, 'limit': limit}
         stmt = stmt.where(Product.category_id == cat.id)
+    if in_stock:
+        available_variants = select(Variant.id).where(Variant.product_id == Product.id,
+            Variant.store_id == 1, Variant.active.is_(True), Variant.stock > 0).exists()
+        stmt = stmt.where(available_variants)
     count = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.scalars(stmt.order_by(Product.id.desc()).offset((page - 1) * limit).limit(limit)).all()
     fx = fx_context()
@@ -334,7 +338,16 @@ def checkout(data: CheckoutIn, db: Session = Depends(session)):
     try:
         if db.bind.dialect.name == 'sqlite': db.execute(text('BEGIN IMMEDIATE'))
         existing = db.scalar(select(Order).where(Order.store_id == 1, Order.request_key == data.request_key))
-        if existing: return order_dict(db, existing)
+        if existing:
+            previous = db.scalars(select(OrderItem).where(OrderItem.order_id == existing.id)).all()
+            old_items = {line.variant_id: line.quantity for line in previous}
+            new_items = {line.variant_id: line.quantity for line in data.items}
+            same_buyer = all(getattr(existing, field) == getattr(data, field)
+                             for field in ('name', 'email', 'phone', 'delivery_address'))
+            same_total = data.expected_total is None or data.expected_total == existing.total
+            if not (same_buyer and old_items == new_items and same_total):
+                raise HTTPException(409, 'Ключ запиту вже використаний для іншого замовлення')
+            return order_dict(db, existing)
         ids = [x.variant_id for x in data.items]
         variants = db.scalars(select(Variant).where(Variant.store_id == 1, Variant.id.in_(ids)).order_by(Variant.id).with_for_update()).all()
         by_id = {v.id: v for v in variants}
@@ -407,6 +420,16 @@ def index(): return FileResponse(ROOT / 'web' / 'index.html')
 
 @app.get('/manage')
 def manage(): return FileResponse(ROOT / 'web' / 'manage.html')
+
+@app.get('/products/{slug}')
+def storefront_product_page(slug: str, db: Session = Depends(session)):
+    if not re.fullmatch(r'[a-z0-9-]{2,130}', slug):
+        raise HTTPException(404, 'Product not found')
+    visible = db.scalar(select(Product.id).where(Product.store_id == 1,
+        Product.slug == slug, Product.active.is_(True)))
+    if visible is None:
+        raise HTTPException(404, 'Product not found')
+    return FileResponse(ROOT / 'web' / 'index.html')
 
 @app.get('/api/admin/products', dependencies=[Depends(auth)])
 def admin_products(db: Session = Depends(session)):
@@ -794,6 +817,11 @@ def maintenance_export(db: Session = Depends(session)):
 def backup_js():
     return FileResponse(ROOT / 'web' / 'admin-backup.js', media_type='application/javascript',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+@app.get('/assets/storefront-v5.js')
+def public_storefront_v5():
+    return FileResponse(ROOT / 'web' / 'storefront-v5.js', media_type='application/javascript',
+                        headers={'Cache-Control': 'no-cache'})
 
 @app.get('/assets/store-fx.js')
 def store_fx_js():

@@ -29,7 +29,7 @@ assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test s
   await (await searched).finished();
   await page.waitForFunction(id=>products.some(p=>p.id===id),product.id);
   await page.locator(`button[onclick="add(${product.id})"]`).click();
-  await page.locator('header button').click();
+  await page.locator('#cart-toggle').click();
   await page.locator('#checkout [name=name]').fill('Тестовий покупець');
   await page.locator('#checkout [name=phone]').fill('+380501234567');
   await page.locator('#checkout [name=email]').fill(email);
