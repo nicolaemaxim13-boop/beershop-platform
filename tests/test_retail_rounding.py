@@ -43,6 +43,7 @@ def test_retail_rounding_is_upward_and_avoids_trailing_zero():
 
 
 def test_unit_prices_round_once_in_catalog_quote_checkout_and_order(monkeypatch):
+    monkeypatch.setenv('BEERSHOP_ADMIN_TOKEN', 't' * 40)
     # An illustrative fixed FX state; no live API requests and no real orders.
     monkeypatch.setattr(main, 'pricing_context', lambda: {
         'rate': Decimal('40'), 'baseline_rate': Decimal('40'),
