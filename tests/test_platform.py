@@ -71,7 +71,10 @@ def test_storefront_v5_product_pages_and_stock_filter():
         assert css.status_code == 200 and 'text/css' in css.headers['content-type']
         assert css.headers['cache-control'] == 'no-store'
         assert 'font-size:0' in css.text
-        assert '/assets/storefront-v6.css' in client.get('/').text
+        landing = client.get('/')
+        assert '/assets/storefront-v6.css' in landing.text
+        assert landing.headers['cache-control'].startswith('no-store')
+        assert page.headers['cache-control'].startswith('no-store')
 
 
 def test_replay_key_cannot_disclose_another_buyers_order():
