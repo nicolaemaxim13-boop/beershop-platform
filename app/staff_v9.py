@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint, select
 from sqlalchemy.orm import Mapped, mapped_column, Session
 
-ROLES = ('owner', 'catalog', 'operations', 'auditor')
+ROLES = ('owner', 'catalog', 'operations', 'finance', 'auditor')
 PASSWORD_HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2)
 SESSION_SECONDS = 15 * 60
 LOCK_SECONDS = 15 * 60
@@ -72,6 +72,23 @@ def matching_counter(seed, code, now=None, after=-1):
         if candidate > after and candidate >= 0 and hmac.compare_digest(totp_at(seed, candidate), code):
             return candidate
     return None
+
+
+def verify_bearer_staff(authorization, db, user_model, session_model):
+    """Shared session verifier for pilot routes and strict legacy-admin bridge."""
+    require_staging()
+    token = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
+    if len(token) < 32 or len(token) > 256:
+        raise HTTPException(401, 'Unauthorized')
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    item = db.scalar(select(session_model).where(session_model.token_hash == digest))
+    now = int(time.time())
+    if not item or item.revoked or item.expires_at <= now:
+        raise HTTPException(401, 'Unauthorized')
+    user = db.get(user_model, item.user_id)
+    if not user or not user.active or user.locked_until > now:
+        raise HTTPException(401, 'Unauthorized')
+    return user, item
 
 
 class LoginIn(BaseModel):
@@ -131,19 +148,7 @@ def setup_staff_auth(app, Base, session, audit_provider):
 
     def staff_session(authorization: str | None = Header(default=None),
                       db: Session = Depends(session)):
-        require_staging()
-        token = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
-        if len(token) < 32 or len(token) > 256:
-            raise HTTPException(401, 'Unauthorized')
-        digest = hashlib.sha256(token.encode()).hexdigest()
-        item = db.scalar(select(StaffSession).where(StaffSession.token_hash == digest))
-        now = int(time.time())
-        if not item or item.revoked or item.expires_at <= now:
-            raise HTTPException(401, 'Unauthorized')
-        user = db.get(StaffUser, item.user_id)
-        if not user or not user.active or user.locked_until > now:
-            raise HTTPException(401, 'Unauthorized')
-        return user, item
+        return verify_bearer_staff(authorization, db, StaffUser, StaffSession)
 
     def require_roles(*accepted):
         def verify(identity=Depends(staff_session)):
@@ -206,6 +211,30 @@ def setup_staff_auth(app, Base, session, audit_provider):
         db.commit()
         return {'revoked': True}
 
+    @router.post('/sessions/revoke-all')
+    def revoke_all_own_sessions(identity=Depends(staff_session),
+                                db: Session = Depends(session)):
+        user, _ = identity
+        sessions = db.scalars(select(StaffSession).where(
+            StaffSession.user_id == user.id, StaffSession.revoked.is_(False))).all()
+        for s in sessions:
+            s.revoked = True
+        db.commit()
+        return {'revoked_sessions': len(sessions), 'all_current_sessions_closed': True}
+
+    @router.post('/users/{user_id}/revoke-sessions')
+    def owner_revoke_sessions(user_id: int, identity=Depends(require_roles('owner')),
+                              db: Session = Depends(session)):
+        user = db.get(StaffUser, user_id)
+        if not user:
+            raise HTTPException(404, 'User not found')
+        sessions = db.scalars(select(StaffSession).where(
+            StaffSession.user_id == user_id, StaffSession.revoked.is_(False))).all()
+        for s in sessions:
+            s.revoked = True
+        db.commit()
+        return {'revoked_sessions': len(sessions)}
+
     @router.get('/readiness')
     def readiness(identity=Depends(require_roles('owner', 'auditor')),
                   db: Session = Depends(session)):
@@ -225,7 +254,7 @@ def setup_staff_auth(app, Base, session, audit_provider):
         }
 
     @router.get('/order-counts')
-    def order_counts(identity=Depends(require_roles('owner', 'operations')),
+    def order_counts(identity=Depends(require_roles('owner', 'operations', 'finance')),
                      db: Session = Depends(session)):
         from sqlalchemy import func
         from .main import Order
