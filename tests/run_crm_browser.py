@@ -36,7 +36,7 @@ with tempfile.TemporaryDirectory(prefix='beershop-browser-') as folder, socket.s
                 time.sleep(.1)
         else:
             raise RuntimeError('Fixture readiness timed out')
-        for script in ('crm_browser.cjs', 'crm_react_browser.cjs', 'responsive_browser.cjs', 'storefront_v5_browser.cjs'):
+        for script in ('crm_browser.cjs', 'crm_react_browser.cjs', 'responsive_browser.cjs', 'storefront_v5_browser.cjs', 'gallery_v8_browser.cjs'):
             subprocess.run(['node', str(root / 'tests' / script)], cwd=root, env=env, check=True, timeout=180)
     finally:
         server.terminate()
