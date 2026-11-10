@@ -95,12 +95,19 @@ def build_report(db, *, Product, Variant, Order, OrderItem, PricingPolicy,
         else 'Секрет адміністратора відсутній або коротший за 32 символи.',
         'Використовувати довгий секрет лише у Render Environment.')
     pilot_enabled = os.getenv('BEERSHOP_V9_STAFF_AUTH') == '1'
+    rbac_test_mode = (
+        os.getenv('BEERSHOP_V91_ENFORCE_RBAC') == '1'
+        and os.getenv('BEERSHOP_V91_STAGING_ACK') == 'ISOLATED_STAGING_ONLY'
+        and pilot_enabled
+    )
     add('individual_accounts', 'security', 'block', 'Ролі та MFA',
-        ('Обмежений staging-пілот персональних входів доступний, але стара адмінпанель все ще приймає повноправний спільний токен. '
-         'Немає перевіреного production-переходу, ролей для CRM і управління платежами.'
+        ('Строгу маршрутну RBAC-політику підключено лише в ізольованому staging. '
+         'Повний перехід, MFA recovery, мережеві ліміти та незалежний review для production не завершені.'
+         if rbac_test_mode else
+         'Персональний MFA-пілот існує, але production використовує спільний адміністративний токен.'
          if pilot_enabled else
-         'Всі основні адміністративні операції використовують один токен; персональні ролі та MFA у production відсутні.'),
-        'Перенести кожну адміністративну операцію на перевірені дозволи, завершити MFA/ревізію сесій та вимкнути спільний токен.')
+         'У production немає особистих облікових записів із MFA та повної маршрутизованої RBAC.'),
+        'Завершити перевірку доступів і відмов, перевірити мобільні UI, журнал безпеки та ротацію ключів перед go-live.')
     add('abuse_protection', 'security', 'block', 'Захист від зловживань',
         'Не підтверджені розподілені обмеження частоти запитів, сповіщення та production security review.',
         'Додати перевірені ліміти/моніторинг і провести незалежний огляд.')
