@@ -99,7 +99,17 @@ pre,.bulk-report,.ops-json{max-width:100%;overflow-x:auto;overflow-wrap:anywhere
 <div class="c32preview"><img id="c32photo" alt="Фотографія товару"><span class="muted" id="c32imgmissing">Фотографія відсутня</span></div>
 <div class="c32fields"><div><label for="c32name">Назва</label><input id="c32name" maxlength="200" minlength="2" required></div><div><label for="c32category">Категорія</label><select id="c32category" required></select></div></div>
 <label for="c32description">Опис товару</label><textarea id="c32description" maxlength="4000" rows="5"></textarea>
-<label for="c32image">Постійне HTTPS-посилання на фотографію</label><input id="c32image" maxlength="500" placeholder="https://..." oninput="catalog32PreviewImage()">
+<div class="c32gallery-editor">
+ <h4>Фотогалерея товару · до 6 зображень</h4>
+ <p class="muted">Перше фото — головне в каталозі. Змінюй порядок, обирай головне та видаляй зайве. HTTPS-посилання зберігаються в Neon, але самі файли залишаються на зовнішньому сайті. Заміни недоступні фото Prom.ua стабільними власними посиланнями.</p>
+ <label for="c32image">Головне фото — постійне HTTPS-посилання</label>
+ <input id="c32image" maxlength="500" placeholder="https://..." oninput="catalog32PreviewImage()">
+ <div id="c32gallery" class="c32gallery" aria-label="Порядок фотографій"></div>
+ <label for="c32newimage">Додаткове фото — HTTPS URL</label>
+ <div class="c32gallery-add"><input id="c32newimage" type="url" maxlength="500" inputmode="url" placeholder="https://example.com/photo.jpg">
+ <button class="secondary" type="button" onclick="catalog32AddImage()">+ Фото</button></div>
+ <p id="c32gallery-count" class="muted" role="status" aria-live="polite">Галерея порожня</p>
+</div>
 <label><input id="c32active" type="checkbox" style="width:auto;margin-right:8px"> Опублікований товар</label>
 <div class="row"><button id="c32save" type="submit">Зберегти</button><button class="secondary" type="button" onclick="catalog32Close()">Закрити</button></div></form>
 <div class="c32upload"><h4>Завантаження з телефону (тимчасове)</h4><p class="muted">У Render Free локально завантажені фото можуть зникнути після перезапуску. Для постійних фотографій використовуйте HTTPS-посилання, доки не підключимо сховище.</p>
