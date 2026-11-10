@@ -82,7 +82,7 @@ export function List({
   if (view === "inventory")
     return (
       <div className="table-wrap">
-        <table>
+        <table className="responsive-table">
           <thead>
             <tr>
               <th>Товар / SKU</th>
@@ -94,7 +94,7 @@ export function List({
           <tbody>
             {(rows as StockRow[]).map((v) => (
               <tr key={v.variant_id}>
-                <td>
+                <td data-label="Товар / SKU">
                   <button
                     className="text-button cell-title"
                     data-action="stock"
@@ -110,9 +110,9 @@ export function List({
                     {!v.active && " · Приховано"}
                   </span>
                 </td>
-                <td>{v.on_hand}</td>
-                <td>{v.reserved}</td>
-                <td>
+                <td data-label="На складі">{v.on_hand}</td>
+                <td data-label="Резерв">{v.reserved}</td>
+                <td data-label="Доступно">
                   <strong>{v.available}</strong>
                 </td>
               </tr>
@@ -124,7 +124,7 @@ export function List({
   if (view === "customers")
     return (
       <div className="table-wrap">
-        <table>
+        <table className="responsive-table">
           <thead>
             <tr>
               <th>Клієнт</th>
@@ -136,7 +136,7 @@ export function List({
           <tbody>
             {(rows as CustomerRow[]).map((c) => (
               <tr key={c.id}>
-                <td>
+                <td data-label="Клієнт">
                   <button
                     className="text-button cell-title"
                     data-action="customer"
@@ -147,12 +147,12 @@ export function List({
                   </button>
                   <span className="sub mobile-only">{c.phone}</span>
                 </td>
-                <td className="hide-small">
+                <td className="hide-small" data-label="Контакти">
                   {c.phone}
                   <span className="sub">{c.email}</span>
                 </td>
-                <td>{c.orders}</td>
-                <td className="money">{money(c.paid_total)}</td>
+                <td data-label="Замовлення">{c.orders}</td>
+                <td className="money" data-label="Оплачено">{money(c.paid_total)}</td>
               </tr>
             ))}
           </tbody>
@@ -161,7 +161,7 @@ export function List({
     );
   return (
     <div className="table-wrap">
-      <table>
+      <table className="responsive-table">
         <thead>
           <tr>
             <th>Замовлення</th>
@@ -175,7 +175,7 @@ export function List({
         <tbody>
           {(rows as OrderRow[]).map((o) => (
             <tr key={o.id}>
-              <td>
+              <td data-label="Замовлення">
                 <button
                   className="text-button cell-title"
                   data-action="order"
@@ -195,7 +195,7 @@ export function List({
                   </span>
                 )}
               </td>
-              <td>
+              <td data-label="Клієнт">
                 <button
                   className="text-button cell-title"
                   data-action="customer"
@@ -206,18 +206,18 @@ export function List({
                 </button>
                 <span className="sub">{o.phone}</span>
               </td>
-              <td>
+              <td data-label="Сума / оплата">
                 <span className="money cell-title">{money(o.total)}</span>
                 <Badge value={o.payment_status} />
               </td>
-              <td className="hide-small">
+              <td className="hide-small" data-label="Статус">
                 <Badge value={o.status} />
               </td>
-              <td className="hide-medium">
+              <td className="hide-medium" data-label="Доставка">
                 {labels[o.delivery_status] || o.delivery_status}
                 <span className="sub">{o.tracking_number}</span>
               </td>
-              <td className="hide-medium">{o.manager || "Не призначено"}</td>
+              <td className="hide-medium" data-label="Відповідальний">{o.manager || "Не призначено"}</td>
             </tr>
           ))}
         </tbody>

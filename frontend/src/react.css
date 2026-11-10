@@ -82,3 +82,18 @@ dialog #notice {
     white-space: normal;
   }
 }
+
+/* React-only UI ergonomics across touch and keyboard devices */
+.topbar nav .tab{white-space:normal;min-width:0}
+.page-head .actions{justify-content:flex-end}
+#workspace,#list{min-width:0}
+.error-panel{border-radius:8px}
+@media (pointer:coarse){
+  .text-button{min-height:44px}
+  .manager-row .icon,.drawer-head .icon,.top-actions .icon{min-width:44px;min-height:44px}
+}
+@media (max-width:640px){
+  .summary{min-height:0}
+  .page-head .primary{min-width:0}
+  .topbar .brand{white-space:normal}
+}
