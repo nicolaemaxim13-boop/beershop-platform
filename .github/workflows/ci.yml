@@ -33,6 +33,8 @@ jobs:
       - run: node --check web/ops40.js
       - run: node --check web/store-fx.js
       - run: node --check web/pricing-admin.js
+      - run: node --check web/readiness-v9.js
+      - run: node --check tests/readiness_v9_browser.cjs
       - run: node --check web/storefront-v5.js
       - run: node --check web/storefront-v7.js
       - run: node --check web/admin-gallery-v8.js
