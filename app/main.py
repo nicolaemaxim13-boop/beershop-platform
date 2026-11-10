@@ -30,6 +30,7 @@ from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
 from .backup_v9 import add_integrity
+from .staff_v9 import setup_staff_auth
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -1234,6 +1235,12 @@ from .inventory import setup_inventory
 from .crm import setup_crm
 crm_attach_order, crm_backfill = setup_crm(app, Base, Order, OrderItem, OrderOperations,
                                           OperationsAudit, auth, session, order_dict,inventory_order,inventory_backfill)
+
+# Opt-in staging only: identity tokens never authorize legacy /api/admin
+# mutations, customer records, CRM or bank operations.
+StaffUserV9, StaffSessionV9, create_staff_user_v9 = setup_staff_auth(
+    app, Base, session, lambda db: sales_readiness_v9(db=db))
+
 
 @app.middleware('http')
 async def private_crm_responses(request, call_next):
