@@ -24,7 +24,7 @@ def place_order(client, email=None, phone='+380501234567', key=None):
                         json={'sku':'crm-'+unique,'price':'250.00','stock':5,'currency':'UAH'}).json()
     payload={'request_key':key or unique,'name':'CRM buyer '+unique,'email':email or unique+'@example.test',
              'phone':phone,'delivery_address':'Test branch 1',
-             'items':[{'variant_id':variant['id'],'quantity':1}],'expected_total':'250.00'}
+             'items':[{'variant_id':variant['id'],'quantity':1}],'expected_total':'251.00'}
     response=client.post('/api/orders',json=payload)
     assert response.status_code==201,response.text
     return response.json(),payload
