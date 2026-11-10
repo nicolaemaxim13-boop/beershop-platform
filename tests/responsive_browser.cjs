@@ -52,6 +52,10 @@ const sizes=[320,360,390,600,768,1024,1366,1920];
    await nav.getByRole('button',{name:'Замовлення'}).click();
    assert(await page.locator('#orders').evaluate(el=>el.classList.contains('active')),`Admin tab failed at ${width}`);
    assert.equal(await nav.getByRole('button',{name:'Замовлення'}).getAttribute('aria-pressed'),'true');
+   await nav.getByRole('button',{name:'Валютні ціни'}).click();
+   assert(await page.locator('#pricing-form').isVisible(), 'Pricing settings unavailable at '+width);
+   await fit('pricing settings',width);
+   assert(await page.locator('#pricing-enabled').isVisible(), 'Missing opt-in control at '+width);
    await fit('admin orders',width);
    if([320,390,768,1366].includes(width))await page.screenshot({path:`/tmp/beershop-admin-${width}.png`,fullPage:true});
   }
