@@ -254,5 +254,6 @@
 
   document.getElementById('stock-only').addEventListener('change', reload);
   document.getElementById('category').addEventListener('change', syncCategoryChips);
+  if (document.querySelector('#cards .card')) decorateCatalog();
   loadQuickCategories().then(loadProductPage);
 })();
