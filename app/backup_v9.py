@@ -52,8 +52,12 @@ def add_integrity(snapshot, metadata):
     tables = snapshot.get('tables')
     if not isinstance(tables, dict):
         raise UnsafeBackup('Missing tables')
+    # Normalize Decimal/date-like database values before hashing so the
+    # in-memory manifest equals the downloaded UTF-8 JSON exactly.
+    tables = json.loads(_canonical_bytes(tables))
     return {
         **snapshot,
+        'tables': tables,
         'integrity': {
             'version': INTEGRITY_FORMAT,
             'algorithm': 'sha256',
