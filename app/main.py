@@ -537,7 +537,11 @@ def invoice(order_id: int, db: Session = Depends(session)):
             'purpose': f'Оплата замовлення BS-{o.id:06}', 'payment_status': o.payment_status,
             'note': 'Оплату звіряє менеджер за банківською випискою. Це не фіскальний документ.'}
 @app.get('/')
-def index(): return FileResponse(ROOT / 'web' / 'index.html')
+def index():
+    return FileResponse(ROOT / 'web' / 'index.html', headers={
+        'Cache-Control': 'no-store, no-cache, max-age=0, must-revalidate',
+        'X-Content-Type-Options': 'nosniff'
+    })
 
 @app.get('/manage')
 def manage():
@@ -560,7 +564,10 @@ def storefront_product_page(slug: str, db: Session = Depends(session)):
         Product.slug == slug, Product.active.is_(True)))
     if visible is None:
         raise HTTPException(404, 'Product not found')
-    return FileResponse(ROOT / 'web' / 'index.html')
+    return FileResponse(ROOT / 'web' / 'index.html', headers={
+        'Cache-Control': 'no-store, no-cache, max-age=0, must-revalidate',
+        'X-Content-Type-Options': 'nosniff'
+    })
 
 @app.get('/api/admin/products', dependencies=[Depends(auth)])
 def admin_products(db: Session = Depends(session)):
