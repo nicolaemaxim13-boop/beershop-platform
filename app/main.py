@@ -1046,6 +1046,19 @@ def rename_category(category_id: int, payload: CategoryRename, db: Session = Dep
     db.commit()
     return {'id':c.id,'slug':c.slug,'name':c.name}
 
+@app.get('/assets/admin-gallery-v8.js')
+def admin_gallery_v8_js():
+    return FileResponse(ROOT / 'web' / 'admin-gallery-v8.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/assets/admin-gallery-v8.css')
+def admin_gallery_v8_css():
+    return FileResponse(ROOT / 'web' / 'admin-gallery-v8.css', media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
 @app.get('/assets/admin-catalog32.js')
 def catalog32_js():
     return FileResponse(ROOT / 'web' / 'admin-catalog32.js', media_type='application/javascript',
