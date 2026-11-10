@@ -165,6 +165,7 @@ class VariantIn(BaseModel):
     currency: str = Field(default='UAH', pattern='^(UAH|USD)$')
     active: bool = True
 class ProductUpdate(BaseModel):
+    images: list[str] | None = Field(default=None, max_length=6)
     name: str | None = Field(default=None, min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=4000)
     image_url: str | None = Field(default=None, max_length=500)
@@ -668,14 +669,33 @@ def storefront_product_page(slug: str, db: Session = Depends(session)):
 def admin_products(db: Session = Depends(session)):
     return [product_dict(db, p) for p in db.scalars(select(Product).where(Product.store_id == 1).order_by(Product.id.desc()).limit(5000)).all()]
 
+def _store_product_gallery(db, p, urls):
+    p.image_url = urls[0] if urls else ''
+    db.execute(delete(ProductImage).where(ProductImage.store_id == 1,
+                                          ProductImage.product_id == p.id))
+    db.flush()
+    for index, url in enumerate(urls[1:], start=1):
+        db.add(ProductImage(store_id=1, product_id=p.id, position=index, image_url=url))
+
+
 @app.patch('/api/admin/products/{product_id}', dependencies=[Depends(auth)])
 def edit_product(product_id: int, data: ProductUpdate, db: Session = Depends(session)):
     p = db.get(Product, product_id)
     if not p or p.store_id != 1: raise HTTPException(404, 'Product not found')
-    for key, val in data.model_dump(exclude_unset=True).items():
+    fields = data.model_dump(exclude_unset=True)
+    requested_images = fields.pop('images', None)
+    if requested_images is not None:
+        urls = validated_gallery_urls(requested_images)
+        if 'image_url' in fields and fields['image_url'] != (urls[0] if urls else ''):
+            raise HTTPException(422, 'Головне фото та галерея мають збігатися.')
+        fields.pop('image_url', None)
+    for key, val in fields.items():
         if val is None: raise HTTPException(422, 'Null not allowed')
         setattr(p, key, val)
-    if not db.scalar(select(Category).where(Category.id == p.category_id, Category.store_id == 1)): raise HTTPException(422, 'Invalid category')
+    if not db.scalar(select(Category).where(Category.id == p.category_id, Category.store_id == 1)):
+        raise HTTPException(422, 'Invalid category')
+    if requested_images is not None:
+        _store_product_gallery(db, p, urls)
     db.commit()
     return product_dict(db, p)
 
@@ -687,14 +707,8 @@ def update_product_gallery(product_id: int, data: GalleryUpdate,
         Product.store_id == 1, Product.id == product_id).with_for_update())
     if product is None:
         raise HTTPException(404, 'Product not found')
-    # All-or-nothing transaction: preserve the existing primary field so older
-    # importers, admin pages, comparison cards and exports keep working.
-    product.image_url = urls[0] if urls else ''
-    db.execute(delete(ProductImage).where(
-        ProductImage.store_id == 1, ProductImage.product_id == product_id))
-    db.flush()
-    for index, url in enumerate(urls[1:], start=1):
-        db.add(ProductImage(store_id=1, product_id=product_id, position=index, image_url=url))
+    # All-or-nothing transaction: preserve primary image_url for older clients.
+    _store_product_gallery(db, product, urls)
     db.commit()
     db.refresh(product)
     return product_dict(db, product)
