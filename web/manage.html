@@ -148,7 +148,12 @@ pre,.bulk-report,.ops-json{max-width:100%;overflow-x:auto;overflow-wrap:anywhere
      <button type="button" onclick="opsConfirmPayment()">Підтвердити вручну</button>
     </div>
    </div>
-   <div class="ops-panel">
+   <div class="ops-panel" id="opsOwnCrmV91" hidden>
+    <h3>2. Власна BeerShop CRM</h3>
+    <p class="muted">Клієнти й замовлення залишаються у власній BeerShop CRM. Експорт у сторонню систему вимкнено в staging.</p>
+    <a href="/crm">Відкрити BeerShop CRM</a>
+   </div>
+   <div class="ops-panel" id="opsExternalCrmLegacy">
     <h3>2. KeyCRM</h3>
     <p id="opsCrmStatus" class="muted"></p>
     <div id="opsCrm">
@@ -194,7 +199,12 @@ pre,.bulk-report,.ops-json{max-width:100%;overflow-x:auto;overflow-wrap:anywhere
   <p class="muted">Всі API-ключі зберігаються тільки в секретних змінних Render, не у браузері. Реальне відправлення замовлень у KeyCRM відбувається лише після явного підтвердження адміністратора. Підтвердження оплати ПриватБанком не автоматизовано.</p>
   <button type="button" class="secondary" onclick="conn41Load()">Перевірити конфігурацію</button>
   <div class="ops-grid">
-   <div class="ops-panel">
+   <div class="ops-panel" id="conn41OwnCrmV91" hidden>
+    <h3>Власна BeerShop CRM</h3>
+    <p class="muted">Використовуємо нашу CRM як єдине джерело правди щодо клієнтів та замовлень.</p>
+    <a href="/crm">Відкрити нашу CRM</a>
+   </div>
+   <div class="ops-panel" id="conn41ExternalCrmLegacy">
     <h3>KeyCRM</h3>
     <p id="conn41KeyStatus" class="muted" aria-live="polite">Підключіться до API.</p>
     <button id="conn41FetchSources" class="secondary" disabled onclick="conn41Sources()">Отримати джерела KeyCRM</button>
@@ -254,5 +264,5 @@ async function openProductGallery(id){
 let promVerified=false;async function promPreview(){const f=$('promfile').files[0];if(!f)return msg('Оберіть CSV');const fd=new FormData();fd.append('file',f);try{const result=await api('/api/admin/prom/preview',{method:'POST',body:fd});$('promresult').textContent=JSON.stringify(result,null,2);promVerified=true}catch(e){promVerified=false;msg(e.message)}}
 async function promApply(){if(!promVerified)return msg('Спочатку перевір CSV');if(!confirm('Імпортувати товари? Повторний імпорт оновлює існуючі товари.'))return;const fd=new FormData();fd.append('file',$('promfile').files[0]);try{const result=await api('/api/admin/prom/apply',{method:'POST',body:fd});$('promresult').textContent=JSON.stringify(result,null,2);promVerified=false;loadProducts()}catch(e){msg(e.message)}}
 $('promfile').addEventListener('change',()=>promVerified=false);
-</script><script src="/assets/admin-bulk.js"></script><script src="/assets/admin-catalog32.js"></script><script src="/assets/admin-gallery-v8.js"></script><script src="/assets/admin-backup.js"></script><script src="/assets/ops40.js"></script><script src="/assets/connectors41.js"></script><script src="/assets/pricing-admin.js"></script><script src="/assets/readiness-v9.js"></script></body></html>
+</script><script src="/assets/admin-bulk.js"></script><script src="/assets/admin-catalog32.js"></script><script src="/assets/admin-gallery-v8.js"></script><script src="/assets/admin-backup.js"></script><script src="/assets/ops40.js"></script><script src="/assets/connectors41.js"></script><script src="/assets/pricing-admin.js"></script><script src="/assets/readiness-v9.js"></script><script src="/assets/own-crm-v91.js"></script></body></html>
 
