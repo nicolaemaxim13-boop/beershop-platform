@@ -43,3 +43,22 @@ def calculate_sell_rate(bank_card_rate, cash_usd_buy_rate, single_tax_percent,
         'profit_percent': profit,
         'retained_fraction': retained_revenue,
     }
+
+
+def round_retail_up(amount):
+    """Round a customer-facing UAH unit price upwards to a whole hryvnia.
+
+    For positive prices, avoid prices ending in the digit 0 (e.g. 500 -> 501).
+    This is applied *after* source-currency conversion/FX margin. Preserve 0
+    as zero rather than silently turning a free item into a charge. Accounting
+    and order records still use Decimal with two fractional places.
+    """
+    price = Decimal(str(amount))
+    if not price.is_finite() or price < 0:
+        raise ValueError('Invalid retail price')
+    if price == 0:
+        return Decimal('0.00')
+    rounded = price.quantize(ONE, rounding=ROUND_CEILING)
+    if rounded % 10 == 0:
+        rounded += ONE
+    return rounded.quantize(TWO)

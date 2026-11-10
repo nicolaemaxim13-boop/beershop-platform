@@ -136,7 +136,7 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
     await page.locator('#compare-go').click();
     await page.locator('#compare-dialog').waitFor({state:'visible'});
     assert((await page.locator('#compare-content').textContent()).includes('120W'));
-    assert.match(await page.locator('#compare-content').textContent(), /1[\s\u00a0]?200/);
+    assert.match(await page.locator('#compare-content').textContent(), /1[\s\u00a0]?201/);
     await page.getByRole('button', {name:'Закрити порівняння'}).click();
 
     for (const width of [320, 390, 768, 1366]) {
@@ -144,7 +144,7 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
       await page.goto('/products/' + available.slug);
       await page.locator('#detail-variant').waitFor();
       assert.equal(await page.locator('#product-view h1').textContent(), available.product.name);
-      assert.match(await page.locator('#detail-price').textContent(), /1[\s\u00a0]?500/);
+      assert.match(await page.locator('#detail-price').textContent(), /1[\s\u00a0]?501/);
       assert((await page.locator('#detail-attributes').textContent()).includes('120W'));
       const widthState = await page.evaluate(() => ({
         viewport:innerWidth, document:document.documentElement.scrollWidth

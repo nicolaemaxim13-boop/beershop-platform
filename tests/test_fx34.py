@@ -41,32 +41,32 @@ def test_fx_catalog_quotes_and_orders():
         assert a.status_code==201 and b.status_code==201
         aid,bid=a.json()['id'],b.json()['id']
         first=c.get('/api/products/'+us).json()['variants'][0]
-        assert first['price']=='400.00' and first['currency']=='UAH'
+        assert first['price']=='401.00' and first['currency']=='UAH'
         assert first['source_price']=='10.00' and first['source_currency']=='USD'
-        assert c.get('/api/products/'+uah).json()['variants'][0]['price']=='100.00'
+        assert c.get('/api/products/'+uah).json()['variants'][0]['price']=='101.00'
         with SessionLocal.begin() as db:
             state=db.get(FxState,1)
             state.current_rate=Decimal('44')
             state.checked_at=datetime.now(timezone.utc).isoformat()
-        assert c.get('/api/products/'+us).json()['variants'][0]['price']=='440.00'
-        assert c.get('/api/products/'+uah).json()['variants'][0]['price']=='110.00'
+        assert c.get('/api/products/'+us).json()['variants'][0]['price']=='441.00'
+        assert c.get('/api/products/'+uah).json()['variants'][0]['price']=='111.00'
         q=c.post('/api/quote',json={'items':[{'variant_id':aid,'quantity':1},
                                   {'variant_id':bid,'quantity':2}]})
-        assert q.status_code==200 and q.json()['total']=='660.00'
+        assert q.status_code==200 and q.json()['total']=='663.00'
         payload={'request_key':uuid4().hex,'name':'Quote Customer','email':'test@example.com',
                  'phone':'+380123456789','delivery_address':'Kyiv test office',
                  'items':[{'variant_id':aid,'quantity':1},{'variant_id':bid,'quantity':2}],
-                 'expected_total':'660.00'}
+                 'expected_total':'663.00'}
         assert c.post('/api/orders',json={**payload,'expected_total':'600.00'}).status_code==409
         order=c.post('/api/orders',json=payload)
         assert order.status_code==201,order.text
-        assert order.json()['total']=='660.00'
-        assert sorted(x['unit_price'] for x in order.json()['items'])==['110.00','440.00']
+        assert order.json()['total']=='663.00'
+        assert sorted(x['unit_price'] for x in order.json()['items'])==['111.00','441.00']
         with SessionLocal.begin() as db:
             state=db.get(FxState,1)
             state.current_rate=Decimal('45')
             state.checked_at=datetime.now(timezone.utc).isoformat()
-        assert c.post('/api/orders',json=payload).json()['total']=='660.00'
+        assert c.post('/api/orders',json=payload).json()['total']=='663.00'
         assert c.get('/assets/store-fx.js').status_code==200
         assert 'id="fx-info"' in c.get('/').text
 

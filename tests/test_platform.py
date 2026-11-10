@@ -20,7 +20,7 @@ def test_catalog_and_checkout():
         assert c.get('/api/products?q=Тестова').status_code == 200
         payload={'request_key':uuid4().hex,'name':'Test Customer','email':'test@example.com','phone':'+380123456789','delivery_address':'Kyiv office 1','items':[{'variant_id':vid,'quantity':2}]}
         order=c.post('/api/orders',json=payload); assert order.status_code==201,order.text
-        oid=order.json()['id']; assert order.json()['total']=='2500.00'
+        oid=order.json()['id']; assert order.json()['total']=='2502.00'
         assert c.post('/api/orders',json=payload).json()['id']==oid
         assert c.get('/api/products/'+slug).json()['variants'][0]['stock']==2
         assert c.get(f'/api/admin/orders/{oid}/invoice',headers=auth).status_code==503
@@ -101,7 +101,7 @@ def test_replay_key_cannot_disclose_another_buyers_order():
             'email': 'private@example.test', 'phone': '0501234567',
             'delivery_address': 'Kyiv branch 1',
             'items': [{'variant_id': variant['id'], 'quantity': 1}],
-            'expected_total': '100.00'
+            'expected_total': '101.00'
         }
         created = client.post('/api/orders', json=payload)
         assert created.status_code == 201, created.text

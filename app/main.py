@@ -27,7 +27,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker,
 ROOT = Path(__file__).resolve().parents[1]
 from .storage import sqlalchemy_url, migrate_once
 from .fx import fetch_nbu, convert_price
-from .pricing import calculate_sell_rate
+from .pricing import calculate_sell_rate, round_retail_up
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -258,11 +258,19 @@ def auth(authorization: Annotated[str | None, Header()] = None):
     provided = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
     if not secrets.compare_digest(token, provided): raise HTTPException(401, 'Unauthorized')
 
+def retail_unit_price(variant, fx):
+    # Single authoritative public selling-price policy for catalog,
+    # quote, checkout and order line items. Never change source prices.
+    converted = convert_price(variant.price, variant.currency,
+                              fx['rate'], fx['baseline_rate'])
+    return round_retail_up(converted)
+
+
 def variant_dict(v, fx=None):
     import json
     data = {'id': v.id, 'sku': v.sku, 'attributes': json.loads(v.attributes), 'price': str(v.price), 'currency': v.currency, 'stock': v.stock, 'active': v.active}
     if fx:
-        data.update({'source_price': str(v.price), 'source_currency': v.currency, 'price': str(convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate'])), 'currency': 'UAH', 'rate_date': fx['effective_date']})
+        data.update({'source_price': str(v.price), 'source_currency': v.currency, 'price': str(retail_unit_price(v, fx)), 'currency': 'UAH', 'rate_date': fx['effective_date']})
     return data
 
 def product_dict(db, p, fx=None):
@@ -446,7 +454,7 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
             raise HTTPException(404, 'Variant not found')
         if v.stock < line.quantity:
             raise HTTPException(409, 'Insufficient stock: ' + v.sku)
-        unit = convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate'])
+        unit = retail_unit_price(v, fx)
         details.append({'variant_id': v.id, 'unit_price_uah': str(unit), 'quantity': line.quantity})
         total += unit * line.quantity
     return {'currency': 'UAH', 'total': str(total), 'items': details,
@@ -499,8 +507,16 @@ def products(q: str = Query('', max_length=100), category: str = Query('', max_l
             Variant.product_id == Product.id, Variant.store_id == 1,
             Variant.active.is_(True)
         ).correlate(Product).scalar_subquery()
+        # Compare the same customer-facing whole-UAH prices as the catalog.
+        # SQLite and PostgreSQL both support round()/ceil() and integer modulo.
+        rounded_cents = func.round(min_retail, 2)
+        whole_uah = func.ceil(rounded_cents)
+        retail_sort = case(
+            (whole_uah > 0,
+             case((whole_uah % 10 == 0, whole_uah + 1), else_=whole_uah)),
+            else_=whole_uah)
         stmt = stmt.order_by(min_retail.is_(None),
-                             min_retail.asc() if sort == 'price_asc' else min_retail.desc(),
+                             retail_sort.asc() if sort == 'price_asc' else retail_sort.desc(),
                              Product.id.desc())
     elif sort in ('name_asc', 'name_desc'):
         name_order = func.lower(Product.name)
@@ -574,14 +590,14 @@ def checkout(data: CheckoutIn, db: Session = Depends(session)):
             v = by_id.get(line.variant_id)
             if not v or not v.active or v.product_id not in names or not names[v.product_id].active: raise HTTPException(404, 'Variant not found')
             if v.stock < line.quantity: raise HTTPException(409, 'Insufficient stock: ' + v.sku)
-            total += convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate']) * line.quantity
+            total += retail_unit_price(v, fx) * line.quantity
         if data.expected_total is not None and total != data.expected_total:
             raise HTTPException(409, 'Ціна змінилася разом із курсом USD/UAH. Оновіть кошик і підтвердьте нову суму.')
         order = Order(store_id=1, request_key=data.request_key, name=data.name, email=data.email, phone=data.phone, delivery_address=data.delivery_address, total=total)
         db.add(order); db.flush()
         for line in data.items:
             v = by_id[line.variant_id]; v.stock -= line.quantity
-            db.add(OrderItem(order_id=order.id, variant_id=v.id, sku=v.sku, name=names[v.product_id].name, quantity=line.quantity, unit_price=convert_price(v.price, v.currency, fx['rate'], fx['baseline_rate'])))
+            db.add(OrderItem(order_id=order.id, variant_id=v.id, sku=v.sku, name=names[v.product_id].name, quantity=line.quantity, unit_price=retail_unit_price(v, fx)))
         crm_attach_order(db, order)
         inventory_reserve(db, order)
         db.commit()
