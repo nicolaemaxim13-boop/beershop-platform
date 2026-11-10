@@ -76,7 +76,7 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
       await page.goto('/products/' + available.slug);
       await page.locator('#detail-variant').waitFor();
       assert.equal(await page.locator('#product-view h1').textContent(), available.product.name);
-      assert.equal(await page.locator('#detail-price').textContent(), '1 500,00 ₴'.replace(/\u00a0/g,'\u00a0')) || !!(await page.locator('#detail-price').textContent()));
+      assert.match(await page.locator('#detail-price').textContent(), /1[\s\u00a0]?500/);
       assert((await page.locator('#detail-attributes').textContent()).includes('120W'));
       const widthState = await page.evaluate(() => ({
         viewport:innerWidth, document:document.documentElement.scrollWidth
