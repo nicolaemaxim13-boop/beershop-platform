@@ -84,6 +84,20 @@ ROUTE_ROLES = {
 }
 
 
+# Our own BeerShop CRM is the only intended order/customer system.
+# KeyCRM remains as legacy code for compatibility, but ALL its routes
+# (including manual external-ID confirmation and JSON export) are disabled
+# in v9.1 strict staging. No customer PII can leave for external CRM.
+DISABLED_KEYCRM_ROUTES = frozenset({
+    ('GET', '/api/admin/ops/orders/{order_id}/keycrm-payload'),
+    ('POST', '/api/admin/ops/orders/{order_id}/keycrm-confirm'),
+    ('GET', '/api/admin/connectors41/keycrm/sources'),
+    ('POST', '/api/admin/connectors41/keycrm/refresh/{order_id}'),
+    ('GET', '/api/admin/connectors41/keycrm/dispatch/{order_id}'),
+    ('POST', '/api/admin/connectors41/keycrm/sync/{order_id}'),
+})
+
+
 # In the strict staging rehearsal, connector endpoints which can contact real
 # third parties are disabled even for owners. Explicit sync tests use synthetic
 # mocks on a separate fixture, never external provider credentials.
@@ -124,6 +138,8 @@ def authorize_legacy_admin_request(*, request, authorization, db, user_model,
     allowed = allowed_roles_for(request.method, template)
     if not allowed or user.role not in allowed:
         raise HTTPException(403, 'Insufficient role or unregistered admin route')
+    if (request.method, template) in DISABLED_KEYCRM_ROUTES:
+        raise HTTPException(503, 'KeyCRM not used: BeerShop CRM is authoritative')
     if (request.method, template) in EXTERNAL_NETWORK_ROUTES:
         raise HTTPException(503, 'External provider requests disabled in staging')
     return user
