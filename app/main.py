@@ -949,6 +949,12 @@ def backup_js():
     return FileResponse(ROOT / 'web' / 'admin-backup.js', media_type='application/javascript',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
 
+@app.get('/assets/storefront-v6.css')
+def public_storefront_v6_css():
+    return FileResponse(ROOT / 'web' / 'storefront-v6.css', media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
 @app.get('/assets/storefront-v5.js')
 def public_storefront_v5():
     return FileResponse(ROOT / 'web' / 'storefront-v5.js', media_type='application/javascript',
