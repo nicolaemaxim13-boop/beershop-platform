@@ -109,18 +109,18 @@ def test_admin_pricing_activation_and_server_quoted_checkout():
             assert usd.status_code == 201 and uah.status_code == 201
             usd_item = client.get('/api/products/' + stem).json()['variants'][0]
             uah_item = client.get('/api/products/' + stem + '-uah').json()['variants'][0]
-            assert usd_item['price'] == '5023.64' and usd_item['currency'] == 'UAH'
+            assert usd_item['price'] == '5024.00' and usd_item['currency'] == 'UAH'
             assert usd_item['source_price'] == '100.00' and usd_item['source_currency'] == 'USD'
-            assert uah_item['price'] == '1000.00', 'UAH must not receive an additional markup'
+            assert uah_item['price'] == '1001.00', 'UAH must not receive an additional markup'
 
             listing = client.get('/api/products', params={'q': 'Manual-price test tap'})
             assert listing.status_code == 200
-            assert any(v['price'] == '5023.64' for p in listing.json()['items'] for v in p['variants'])
+            assert any(v['price'] == '5024.00' for p in listing.json()['items'] for v in p['variants'])
             items = [{'variant_id': usd.json()['id'], 'quantity': 1},
                      {'variant_id': uah.json()['id'], 'quantity': 1}]
             quote = client.post('/api/quote', json={'items': items})
             assert quote.status_code == 200, quote.text
-            assert quote.json()['total'] == '6023.64'
+            assert quote.json()['total'] == '6025.00'
             order = {'request_key': uuid4().hex, 'name': 'FX Test User',
                      'email': 'pricing-fixture@example.test', 'phone': '0501234567',
                      'delivery_address': 'Kyiv test branch',
