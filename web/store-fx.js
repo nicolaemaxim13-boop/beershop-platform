@@ -7,7 +7,10 @@ async function fxBanner(){
     const fx=await res.json();
     if(!res.ok)throw Error(fx.detail || 'Курс недоступний');
     const rate=new Intl.NumberFormat('uk-UA',{minimumFractionDigits:2,maximumFractionDigits:4}).format(Number(fx.rate));
-    banner.textContent='Ціни у гривнях · 1 USD = '+rate+' ₴ · курс НБУ на '+fx.effective_date+(fx.delayed?' (останній перевірений курс)':'');
+    const manual=fx.source==='manual-pricing-policy';
+    banner.textContent='Ціни у гривнях · 1 USD = '+rate+' ₴ · '+(
+      manual?'розрахунковий курс BeerShop (курси банку та обмінника внесені вручну)':'офіційний курс НБУ')+
+      ' на '+fx.effective_date+(fx.delayed?' (останній перевірений курс)':'');
   }catch(e){banner.textContent='Оновлення курсу недоступне. Оформлення замовлень тимчасово призупинено.';}
 }
 placeOrder=async function(e){
