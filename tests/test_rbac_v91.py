@@ -147,6 +147,14 @@ def test_role_separation_for_crm_catalog_orders_finance_and_backup(strict_env, t
         # Explicitly disable all external connector calls in strict rehearsal.
         assert client.get('/api/admin/connectors41/keycrm/sources',
                           headers=operations).status_code==503
+        assert client.get('/api/admin/connectors41/keycrm/dispatch/1',
+                          headers=operations).status_code==503
+        assert client.post('/api/admin/connectors41/keycrm/sync/1',
+                           headers=operations,json={}).status_code==503
+        assert client.get('/api/admin/ops/orders/1/keycrm-payload',
+                          headers=operations,params={'source_id':1}).status_code==503
+        assert client.post('/api/admin/ops/orders/1/keycrm-confirm',
+                           headers=operations,json={}).status_code==503
         assert client.get('/api/admin/connectors41/nova-poshta/tracking/1',
                           headers=operations).status_code==503
 
