@@ -1,0 +1,13 @@
+/* BeerShop v8 — product-gallery thumbnail rail */
+.product-gallery{min-width:0;display:flex;flex-direction:column;gap:12px}
+.product-gallery .product-detail-art{min-height:330px;max-height:590px;width:100%;font-size:0}
+.product-gallery .product-detail-art img{display:block;max-height:590px;min-height:0}
+.product-gallery-thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(68px,84px));gap:9px;width:100%;align-items:center}
+.product-gallery-thumb{display:flex;align-items:center;justify-content:center;position:relative;min-width:0;width:100%;height:78px;border:2px solid #dbe5dc;border-radius:11px;padding:6px;background:#f4f7f4;overflow:hidden;box-shadow:none;cursor:pointer}
+.product-gallery-thumb:hover:not(:disabled){background:#eaf3eb}
+.product-gallery-thumb[aria-pressed="true"]{border-color:#1b6d44;box-shadow:0 0 0 2px #e0f5e6}
+.product-gallery-thumb img{width:100%;height:100%;max-width:100%;object-fit:contain;font-size:0;line-height:0}
+.product-gallery-count{font-size:12px;color:#66796a;line-height:1.4;margin:0}
+.product-gallery-thumb:focus-visible{outline:3px solid #226647;outline-offset:3px}
+@media(max-width:880px){.product-gallery .product-detail-art{min-height:220px;max-height:380px}.product-gallery .product-detail-art img{max-height:380px}}
+@media(max-width:600px){.product-gallery .product-detail-art{min-height:190px;max-height:270px}.product-gallery .product-detail-art img{max-height:270px}.product-gallery-thumbs{grid-template-columns:repeat(auto-fill,minmax(62px,72px));gap:7px}.product-gallery-thumb{height:68px}}
