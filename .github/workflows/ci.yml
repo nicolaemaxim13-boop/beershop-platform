@@ -35,6 +35,8 @@ jobs:
       - run: node --check web/pricing-admin.js
       - run: node --check web/readiness-v9.js
       - run: node --check web/staff-v9.js
+      - run: node --check web/own-crm-v91.js
+      - run: node --check tests/own_crm_v91_browser.cjs
       - run: node --check tests/readiness_v9_browser.cjs
       - run: node --check web/storefront-v5.js
       - run: node --check web/storefront-v7.js
