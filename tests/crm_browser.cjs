@@ -80,7 +80,7 @@ assert(['127.0.0.1','localhost'].includes(origin.hostname), 'Only a local test s
   await page.locator('#editor input[type=checkbox]').check();
   await page.locator('#save-edit').click();
   await page.locator('#editor-error').waitFor({state:'visible'});
-  await page.locator('#bank-amount').fill('250.00');
+  await page.locator('#bank-amount').fill('251.00');
   await page.locator('#save-edit').click();
   await page.locator('#editor').waitFor({state:'hidden'});
   assert(await page.locator('[data-status="fulfilled"]').isDisabled());
