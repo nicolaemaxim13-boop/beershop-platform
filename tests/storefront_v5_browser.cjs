@@ -29,7 +29,7 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
     const cats = await api('GET', '/api/categories');
     const category_id = cats[0].id;
     const mk = async (suffix, stock, price) => {
-      const slug = 'v5-' + suffix + '-' + stamp;
+      const slug = 'v5-' + suffix.toLowerCase() + '-' + stamp;
       const product = await api('POST', '/api/admin/products', {
         name: 'V5 Fixture ' + suffix + ' ' + stamp, slug, category_id,
         image_url: '/assets/crm-icons/store.svg', description: 'Synthetic fixture, not real merchandise'
