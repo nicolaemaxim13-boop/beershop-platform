@@ -1221,7 +1221,10 @@ async def private_crm_responses(request, call_next):
         response.headers['Strict-Transport-Security'] = 'max-age=31536000'
     if (request.url.path.startswith(('/api/admin/', '/crm/')) or
             request.url.path in {'/crm', '/crm-legacy', '/manage'}):
-        response.headers['Cache-Control'] = 'private, no-store'
+        # Preserve stronger no-store/no-cache headers explicitly set by the
+        # admin HTML route (existing consumers and tests rely on their order).
+        if 'Cache-Control' not in response.headers:
+            response.headers['Cache-Control'] = 'private, no-store'
         response.headers['X-Robots-Tag'] = 'noindex, nofollow'
     return response
 
