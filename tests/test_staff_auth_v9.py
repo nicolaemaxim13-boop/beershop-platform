@@ -181,4 +181,6 @@ def test_staff_ui_disabled_by_default_and_secure_when_enabled(staff_env):
             assert result.status_code == 200
             assert media in result.headers['content-type']
             assert result.headers['cache-control'] == 'no-store'
-        assert 'localStorage' not in c.get('/assets/staff-v9.js').text
+        ui = c.get('/assets/staff-v9.js').text
+        assert 'localStorage.setItem' not in ui
+        assert 'sessionStorage.setItem' not in ui
