@@ -257,6 +257,8 @@ def session():
 def auth(authorization: Annotated[str | None, Header()] = None):
     token = os.getenv('BEERSHOP_ADMIN_TOKEN', '')
     if len(token) < 32: raise HTTPException(503, 'Admin token not configured')
+    if os.getenv('BEERSHOP_V9_AUDIT_TOKEN', '') == token:
+        raise HTTPException(503, 'Audit token must differ from admin token')
     provided = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
     if not secrets.compare_digest(token, provided): raise HTTPException(401, 'Unauthorized')
 
@@ -270,6 +272,8 @@ def auth_readiness(authorization: Annotated[str | None, Header()] = None):
     admin = os.getenv('BEERSHOP_ADMIN_TOKEN', '')
     if len(admin) < 32:
         raise HTTPException(503, 'Admin token not configured')
+    if os.getenv('BEERSHOP_V9_AUDIT_TOKEN', '') == admin:
+        raise HTTPException(503, 'Audit token must differ from admin token')
     provided = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
     if secrets.compare_digest(provided, admin):
         return
