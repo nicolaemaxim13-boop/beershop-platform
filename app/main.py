@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import create_engine, String, Integer, Numeric, Boolean, ForeignKey, UniqueConstraint, select, text, func
+from sqlalchemy import create_engine, String, Integer, Numeric, Boolean, ForeignKey, UniqueConstraint, select, text, func, case, or_
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -401,21 +401,60 @@ def health(): return {'status': 'ok', 'version': '4.4.0'}
 def categories(db: Session = Depends(session)):
     return [{'id': c.id, 'slug': c.slug, 'name': c.name} for c in db.scalars(select(Category).where(Category.store_id == 1).order_by(Category.id)).all()]
 @app.get('/api/products')
-def products(q: str = Query('', max_length=100), category: str = Query('', max_length=90), in_stock: bool = False, page: int = Query(1, ge=1), limit: int = Query(12, ge=1, le=50), db: Session = Depends(session)):
+def products(q: str = Query('', max_length=100), category: str = Query('', max_length=90),
+             in_stock: bool = False,
+             sort: Literal['newest', 'price_asc', 'price_desc', 'name_asc', 'name_desc'] = 'newest',
+             page: int = Query(1, ge=1), limit: int = Query(12, ge=1, le=50),
+             db: Session = Depends(session)):
+    """Apply filters AND sorting in SQL before pagination, never just on visible cards."""
     stmt = select(Product).where(Product.store_id == 1, Product.active.is_(True))
-    if q: stmt = stmt.where(Product.name.ilike('%' + q.replace('%', r'\%').replace('_', r'\_') + '%', escape='\\'))
+    if q:
+        # Escape LIKE wildcards; include variant SKU for convenient supplier-code search.
+        pattern = '%' + q.replace('\\', '\\\\').replace('%', r'\%').replace('_', r'\_') + '%'
+        sku_match = select(Variant.id).where(
+            Variant.product_id == Product.id, Variant.store_id == 1,
+            Variant.active.is_(True), Variant.sku.ilike(pattern, escape='\\')
+        ).correlate(Product).exists()
+        stmt = stmt.where(or_(Product.name.ilike(pattern, escape='\\'),
+                              Product.slug.ilike(pattern, escape='\\'), sku_match))
     if category:
         cat = db.scalar(select(Category).where(Category.store_id == 1, Category.slug == category))
-        if not cat: return {'items': [], 'total': 0, 'page': page, 'limit': limit}
+        if not cat:
+            return {'items': [], 'total': 0, 'page': page, 'limit': limit, 'sort': sort}
         stmt = stmt.where(Product.category_id == cat.id)
     if in_stock:
-        available_variants = select(Variant.id).where(Variant.product_id == Product.id,
-            Variant.store_id == 1, Variant.active.is_(True), Variant.stock > 0).exists()
+        available_variants = select(Variant.id).where(
+            Variant.product_id == Product.id, Variant.store_id == 1,
+            Variant.active.is_(True), Variant.stock > 0
+        ).correlate(Product).exists()
         stmt = stmt.where(available_variants)
+
     count = db.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = db.scalars(stmt.order_by(Product.id.desc()).offset((page - 1) * limit).limit(limit)).all()
+    # A single server-authoritative rate is used for ordering and displayed
+    # retail quotes. Raw USD numbers must never be compared with raw UAH prices.
     fx = pricing_context()
-    return {'items': [product_dict(db, p, fx=fx) for p in rows], 'total': count, 'page': page, 'limit': limit}
+    if sort in ('price_asc', 'price_desc'):
+        retail_value = case(
+            (Variant.currency == 'USD', Variant.price * fx['rate']),
+            else_=Variant.price * fx['rate'] / fx['baseline_rate']
+        )
+        min_retail = select(func.min(retail_value)).where(
+            Variant.product_id == Product.id, Variant.store_id == 1,
+            Variant.active.is_(True)
+        ).correlate(Product).scalar_subquery()
+        stmt = stmt.order_by(min_retail.is_(None),
+                             min_retail.asc() if sort == 'price_asc' else min_retail.desc(),
+                             Product.id.desc())
+    elif sort in ('name_asc', 'name_desc'):
+        name_order = func.lower(Product.name)
+        stmt = stmt.order_by(name_order.asc() if sort == 'name_asc' else name_order.desc(),
+                             Product.id.desc())
+    else:
+        stmt = stmt.order_by(Product.id.desc())
+    rows = db.scalars(stmt.offset((page - 1) * limit).limit(limit)).all()
+    return {'items': [product_dict(db, p, fx=fx) for p in rows],
+            'total': count, 'page': page, 'limit': limit, 'sort': sort}
+
 @app.get('/api/products/{slug}')
 def product(slug: str, db: Session = Depends(session)):
     p = db.scalar(select(Product).where(Product.store_id == 1, Product.slug == slug, Product.active.is_(True)))
@@ -955,6 +994,18 @@ def maintenance_export(db: Session = Depends(session)):
 def backup_js():
     return FileResponse(ROOT / 'web' / 'admin-backup.js', media_type='application/javascript',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+@app.get('/assets/storefront-v7.css')
+def public_storefront_v7_css():
+    return FileResponse(ROOT / 'web' / 'storefront-v7.css', media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/assets/storefront-v7.js')
+def public_storefront_v7_js():
+    return FileResponse(ROOT / 'web' / 'storefront-v7.js', media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
 
 @app.get('/assets/storefront-v6.css')
 def public_storefront_v6_css():

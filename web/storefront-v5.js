@@ -317,7 +317,8 @@
     document.getElementById('checkout-count').textContent = String(count);
   };
 
-  document.getElementById('stock-only').addEventListener('change', reload);
+  // Invoke the current catalog loader (v7 replaces it with race-safe pagination).
+  document.getElementById('stock-only').addEventListener('change', () => reload());
   document.getElementById('category').addEventListener('change', syncCategoryChips);
   if (document.querySelector('#cards .card')) decorateCatalog();
   loadQuickCategories().then(loadProductPage);

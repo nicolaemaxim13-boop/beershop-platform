@@ -46,7 +46,9 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
     await page.goto('/');
     await page.locator('#search').fill('V5 Fixture');
     await page.waitForFunction(() =>
-      [...document.querySelectorAll('#cards .card')].length >= 2
+      document.querySelector('#results-status')?.getAttribute('aria-busy') === 'false' &&
+      document.querySelector('#results-status')?.textContent.includes('пошук: «V5 Fixture»') &&
+      [...document.querySelectorAll('#cards .card')].length === 2
     );
     const priceA = page.locator('.card').filter({hasText: available.product.name});
     const priceB = page.locator('.card').filter({hasText: unavailable.product.name});
@@ -89,6 +91,35 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
         await page.screenshot({path: '/tmp/beershop-v6-catalog-' + width + '.png', fullPage: true});
       }
     }
+
+    // v7: sorted server-side across all results, with shareable URL and reload.
+    await page.locator('#sort').selectOption('price_asc');
+    await page.waitForFunction(name =>
+      document.querySelector('#cards .card h3')?.textContent.includes(name),
+      unavailable.product.name
+    );
+    assert.equal(new URL(page.url()).searchParams.get('sort'), 'price_asc');
+    assert.equal(new URL(page.url()).searchParams.get('q'), 'V5 Fixture');
+    await page.reload();
+    await page.locator('#cards .card').first().waitFor();
+    assert.equal(await page.locator('#sort').inputValue(), 'price_asc');
+    assert.equal(await page.locator('#search').inputValue(), 'V5 Fixture');
+    assert((await page.locator('#cards .card').first().textContent()).includes(unavailable.product.name));
+
+    await page.locator('#sort').selectOption('price_desc');
+    await page.waitForFunction(name =>
+      document.querySelector('#cards .card h3')?.textContent.includes(name),
+      available.product.name
+    );
+    await page.locator('#search').fill('V5-B-' + stamp);
+    await page.waitForFunction(name =>
+      document.querySelectorAll('#cards .card').length === 1 &&
+      document.querySelector('.card')?.textContent.includes(name),
+      unavailable.product.name
+    );
+    await page.locator('#search').fill('V5 Fixture');
+    await page.waitForFunction(() => document.querySelectorAll('#cards .card').length === 2);
+    await page.locator('#sort').selectOption('newest');
 
     await page.locator('#stock-only').check();
     await page.waitForFunction(name =>

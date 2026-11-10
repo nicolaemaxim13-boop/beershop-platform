@@ -73,6 +73,15 @@ def test_storefront_v5_product_pages_and_stock_filter():
         assert 'font-size:0' in css.text
         landing = client.get('/')
         assert '/assets/storefront-v6.css' in landing.text
+        assert '/assets/storefront-v7.css' in landing.text
+        assert '/assets/storefront-v7.js' in landing.text
+        assert 'id="sort"' in landing.text
+        for name, media in (('storefront-v7.css', 'text/css'),
+                            ('storefront-v7.js', 'application/javascript')):
+            asset = client.get('/assets/' + name)
+            assert asset.status_code == 200
+            assert media in asset.headers['content-type']
+            assert asset.headers['cache-control'] == 'no-store'
         assert landing.headers['cache-control'].startswith('no-store')
         assert page.headers['cache-control'].startswith('no-store')
 
