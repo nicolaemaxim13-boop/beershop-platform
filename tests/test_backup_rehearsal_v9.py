@@ -95,6 +95,7 @@ def test_rehearsal_restore_counts_and_foreign_keys(tmp_path):
                                        main.Base.metadata,target)
     assert result['mode']=='LOCAL_REHEARSAL_ONLY'
     assert target.exists()
+    assert target.stat().st_mode & 0o777 == 0o600, 'PII-bearing rehearsal DB must remain private'
     local=create_engine('sqlite:///'+str(target))
     with local.connect() as db:
         assert db.scalar(select(func.count()).select_from(main.Product))==1
