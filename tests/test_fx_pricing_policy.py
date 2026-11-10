@@ -52,7 +52,14 @@ def test_admin_pricing_activation_and_server_quoted_checkout():
             assert client.post('/api/admin/pricing/preview', json=values()).status_code == 401
             assert client.put('/api/admin/pricing/policy', json=values()).status_code == 401
             assert client.get('/assets/pricing-admin.js').status_code == 200
-            assert 'id="pricing-form"' in client.get('/manage').text
+            admin_page = client.get('/manage', params={'utm_source': 'chatgpt.com'})
+            assert admin_page.status_code == 200
+            assert admin_page.headers['cache-control'].startswith('no-store')
+            assert admin_page.headers['pragma'] == 'no-cache'
+            assert admin_page.headers['x-beershop-admin-version'] == 'pricing-20261110'
+            assert 'Валютні ціни' in admin_page.text
+            assert '/assets/pricing-admin.js' in admin_page.text
+            assert 'id="pricing-form"' in admin_page.text
             initial = client.get('/api/admin/pricing/policy', headers=AUTH)
             assert initial.status_code == 200
             assert initial.headers['cache-control'] == 'private, no-store'
