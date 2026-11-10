@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 from .storage import sqlalchemy_url, migrate_once
 from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
+from .readiness_v9 import build_report, valid_ukrainian_iban
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -566,6 +567,12 @@ def update_variant(variant_id: int, data: VariantUpdate, db: Session = Depends(s
     db.commit(); return variant_dict(v)
 @app.post('/api/orders', status_code=201)
 def checkout(data: CheckoutIn, db: Session = Depends(session)):
+    # Staging-only switches. Both default to existing behavior when unset.
+    # Production remains untouched unless an operator explicitly configures them.
+    if os.getenv('BEERSHOP_V9_DISABLE_ORDER_CREATION') == '1':
+        raise HTTPException(503, 'STAGING: створення замовлень вимкнено.')
+    if os.getenv('BEERSHOP_V9_REQUIRE_QUOTE_TOTAL') == '1' and data.expected_total is None:
+        raise HTTPException(428, 'Перед замовленням потрібно підтвердити актуальний розрахунок кошика.')
     fx = pricing_context()
     if len({x.variant_id for x in data.items}) != len(data.items): raise HTTPException(422, 'Duplicate variant IDs')
     try:
@@ -644,7 +651,8 @@ def invoice(order_id: int, db: Session = Depends(session)):
     o = db.scalar(select(Order).where(Order.store_id == 1, Order.id == order_id))
     if not o: raise HTTPException(404, 'Order not found')
     iban = os.getenv('BEERSHOP_IBAN', '').strip(); payee = os.getenv('BEERSHOP_PAYEE', '').strip()
-    if not iban or not payee: raise HTTPException(503, 'Bank details not configured')
+    if not valid_ukrainian_iban(iban) or len(payee) < 5:
+        raise HTTPException(503, 'Реквізити рахунку неповні або UA IBAN має неправильну контрольну суму.')
     return {'invoice_number': f'BS-{o.id:06}', 'currency': 'UAH', 'total': str(o.total), 'iban': iban, 'payee': payee,
             'purpose': f'Оплата замовлення BS-{o.id:06}', 'payment_status': o.payment_status,
             'note': 'Оплату звіряє менеджер за банківською випискою. Це не фіскальний документ.'}
@@ -1086,6 +1094,21 @@ def catalog32_css():
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
 
 # Admin-only JSON snapshot. Contains customer PII; requires bearer token.
+@app.get('/api/admin/v9/readiness', dependencies=[Depends(auth)])
+def sales_readiness_v9(db: Session = Depends(session)):
+    """Read-only: no bank statement lookup, payment updates or stock mutations."""
+    return build_report(
+        db, Product=Product, Variant=Variant, Order=Order, OrderItem=OrderItem,
+        PricingPolicy=PricingPolicy,
+        Reservation=Base.metadata.tables['stock_reservations'],
+        Movement=Base.metadata.tables['stock_movements'],
+        admin_token=os.getenv('BEERSHOP_ADMIN_TOKEN', ''),
+        iban=os.getenv('BEERSHOP_IBAN', ''),
+        payee=os.getenv('BEERSHOP_PAYEE', ''),
+        persistent_store=bool(PERSISTENT_URL),
+    )
+
+
 @app.get('/api/admin/maintenance/report', dependencies=[Depends(auth)])
 def maintenance_report(db: Session = Depends(session)):
     names = ('stores', 'categories', 'products', 'variants', 'import_logs', 'orders', 'order_items')
@@ -1109,6 +1132,20 @@ def maintenance_export(db: Session = Depends(session)):
                              'Cache-Control': 'private, no-store',
                              'X-Content-Type-Options': 'nosniff',
                              'X-Robots-Tag': 'noindex, nofollow'})
+
+@app.get('/assets/readiness-v9.js')
+def sales_readiness_js_v9():
+    return FileResponse(ROOT / 'web' / 'readiness-v9.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/assets/readiness-v9.css')
+def sales_readiness_css_v9():
+    return FileResponse(ROOT / 'web' / 'readiness-v9.css',
+                        media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
 
 @app.get('/assets/admin-backup.js')
 def backup_js():
@@ -1174,10 +1211,18 @@ crm_attach_order, crm_backfill = setup_crm(app, Base, Order, OrderItem, OrderOpe
 @app.middleware('http')
 async def private_crm_responses(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(('/api/admin/crm','/api/admin/inventory','/crm/')) or request.url.path in {'/crm','/crm-legacy'}:
+    # Defense-in-depth on both public and admin endpoints, without leaking
+    # financial or customer data into the browser cache or referrer headers.
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+    if request.url.scheme == 'https':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000'
+    if (request.url.path.startswith(('/api/admin/', '/crm/')) or
+            request.url.path in {'/crm', '/crm-legacy', '/manage'}):
         response.headers['Cache-Control'] = 'private, no-store'
         response.headers['X-Robots-Tag'] = 'noindex, nofollow'
-        response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
 
 @app.get('/crm')
