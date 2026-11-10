@@ -30,7 +30,7 @@ from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
 from .backup_v9 import add_integrity
-from .staff_v9 import setup_staff_auth
+from .staff_v9 import setup_staff_auth, is_enabled as staff_v9_enabled
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -1161,6 +1161,37 @@ def maintenance_export(db: Session = Depends(session)):
                              'X-Content-Type-Options': 'nosniff',
                              'X-Robots-Tag': 'noindex, nofollow'})
 
+@app.get('/staff-v9')
+def staff_v9_page():
+    if not staff_v9_enabled():
+        raise HTTPException(503, 'Staff pilot is disabled')
+    return FileResponse(ROOT / 'web' / 'staff-v9.html', headers={
+        'Cache-Control': 'private, no-store',
+        'X-Robots-Tag': 'noindex, nofollow',
+        'Content-Security-Policy': "default-src 'none'; script-src 'self'; "
+          "style-src 'self'; connect-src 'self'; form-action 'self'; "
+          "base-uri 'none'; frame-ancestors 'none'"
+    })
+
+
+@app.get('/assets/staff-v9.js')
+def staff_v9_script():
+    if not staff_v9_enabled():
+        raise HTTPException(503, 'Staff pilot disabled')
+    return FileResponse(ROOT / 'web' / 'staff-v9.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control':'no-store'})
+
+
+@app.get('/assets/staff-v9.css')
+def staff_v9_styles():
+    if not staff_v9_enabled():
+        raise HTTPException(503, 'Staff pilot disabled')
+    return FileResponse(ROOT / 'web' / 'staff-v9.css',
+                        media_type='text/css',
+                        headers={'Cache-Control':'no-store'})
+
+
 @app.get('/assets/readiness-v9.js')
 def sales_readiness_js_v9():
     return FileResponse(ROOT / 'web' / 'readiness-v9.js',
@@ -1254,7 +1285,7 @@ async def private_crm_responses(request, call_next):
     if request.url.scheme == 'https':
         response.headers['Strict-Transport-Security'] = 'max-age=31536000'
     if (request.url.path.startswith(('/api/admin/', '/crm/')) or
-            request.url.path in {'/crm', '/crm-legacy', '/manage'}):
+            request.url.path in {'/crm', '/crm-legacy', '/manage', '/staff-v9'}):
         # Preserve stronger no-store/no-cache headers explicitly set by the
         # admin HTML route (existing consumers and tests rely on their order).
         if 'Cache-Control' not in response.headers:
