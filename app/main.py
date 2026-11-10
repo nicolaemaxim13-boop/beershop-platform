@@ -29,6 +29,7 @@ from .storage import sqlalchemy_url, migrate_once
 from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
+from .backup_v9 import add_integrity
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -1144,6 +1145,10 @@ def maintenance_export(db: Session = Depends(session)):
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'tables': {t.name: [dict(r._mapping) for r in db.execute(select(t)).all()]
                            for t in Base.metadata.sorted_tables}}
+    # v9 adds a deterministic integrity manifest while preserving v1 fields.
+    # No extra network calls. This export still contains customer PII:
+    # encrypt at rest and never upload it to third-party validation services.
+    snapshot = add_integrity(snapshot, Base.metadata)
     output = json.dumps(snapshot, default=str, ensure_ascii=False).encode('utf-8')
     return Response(content=output, media_type='application/json; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="beershop-private-backup.json"',
