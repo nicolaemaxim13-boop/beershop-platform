@@ -28,11 +28,11 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
     const stamp = Date.now().toString();
     const cats = await api('GET', '/api/categories');
     const category_id = cats[0].id;
-    const mk = async (suffix, stock, price) => {
+    const mk = async (suffix, stock, price, imageUrl = '/assets/crm-icons/store.svg') => {
       const slug = 'v5-' + suffix.toLowerCase() + '-' + stamp;
       const product = await api('POST', '/api/admin/products', {
         name: 'V5 Fixture ' + suffix + ' ' + stamp, slug, category_id,
-        image_url: '/assets/crm-icons/store.svg', description: 'Synthetic fixture, not real merchandise'
+        image_url: imageUrl, description: 'Synthetic fixture, not real merchandise. '.repeat(14)
       });
       await api('POST', '/api/admin/products/' + product.id + '/variants', {
         sku: 'V5-' + suffix + '-' + stamp, price, stock, currency: 'UAH',
@@ -41,7 +41,7 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
       return {slug, product};
     };
     const available = await mk('A', 3, '1500.00');
-    const unavailable = await mk('B', 0, '1200.00');
+    const unavailable = await mk('B', 0, '1200.00', 'https://images.prom.ua/broken-synthetic-image-for-ux-test.png');
 
     await page.goto('/');
     await page.locator('#search').fill('V5 Fixture');
@@ -52,6 +52,43 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
     const priceB = page.locator('.card').filter({hasText: unavailable.product.name});
     await priceA.waitFor();
     await priceB.waitFor();
+    // A broken remote photo must show a compact fallback, never a huge alt-text
+    // paragraph leaking over the product title or price.
+    await priceB.scrollIntoViewIfNeeded();
+    await priceB.locator('.image-error-fallback').waitFor();
+    const badPhoto = await priceB.locator('.art').evaluate(el => ({
+      height: el.clientHeight, scroll: el.scrollHeight,
+      fallback: Boolean(el.querySelector('.image-error-fallback')),
+      imgHidden: Boolean(el.querySelector('img[hidden]'))
+    }));
+    assert(badPhoto.fallback && badPhoto.imgHidden, 'Broken imported photo needs fallback: ' + JSON.stringify(badPhoto));
+    assert(badPhoto.scroll <= badPhoto.height + 1, 'Broken photo overflows: ' + JSON.stringify(badPhoto));
+    assert(await priceB.locator('.row button').isDisabled(), 'Sold-out item must not be added to cart');
+    assert(await priceB.locator('.product-stock-badge').textContent() === '○ Немає в наявності');
+    for (const width of [320, 390, 768, 1366, 1647, 1920]) {
+      await page.setViewportSize({width, height: 844});
+      const layout = await page.evaluate(() => {
+        const card = document.querySelector('#cards .card');
+        const image = card.querySelector('.art');
+        return {
+          viewport: innerWidth,
+          docWidth: document.documentElement.scrollWidth,
+          imageHeight: image.clientHeight,
+          imageScrollHeight: image.scrollHeight,
+          gridColumns: getComputedStyle(document.querySelector('#cards')).gridTemplateColumns.split(' ').length,
+          titleClamp: getComputedStyle(card.querySelector('h3')).webkitLineClamp,
+          descriptionClamp: getComputedStyle(card.querySelector('p.muted')).webkitLineClamp,
+        };
+      });
+      assert(layout.docWidth <= width + 1, 'Catalog overflow ' + width + ': ' + JSON.stringify(layout));
+      assert(layout.imageScrollHeight <= layout.imageHeight + 1, 'Art overflow ' + width + ': ' + JSON.stringify(layout));
+      assert.equal(layout.titleClamp, '2');
+      assert.equal(layout.descriptionClamp, '3');
+      if (width === 1647) assert.equal(layout.gridColumns, 3, 'Avoid cramped four-column cards at user screenshot width');
+      if ([390, 1647].includes(width)) {
+        await page.screenshot({path: '/tmp/beershop-v6-catalog-' + width + '.png', fullPage: true});
+      }
+    }
 
     await page.locator('#stock-only').check();
     await page.waitForFunction(name =>
