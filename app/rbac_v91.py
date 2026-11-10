@@ -23,8 +23,8 @@ ROUTE_ROLES = {
     ('PUT', '/api/admin/pricing/policy'): FINANCE,
     ('POST', '/api/admin/categories'): CATALOG,
     ('POST', '/api/admin/products'): CATALOG,
-    ('POST', '/api/admin/products/{product_id}/variants'): CATALOG,
-    ('PATCH', '/api/admin/variants/{variant_id}'): CATALOG,
+    ('POST', '/api/admin/products/{product_id}/variants'): OWNER,  # supplier cost
+    ('PATCH', '/api/admin/variants/{variant_id}'): OWNER,  # can edit price
     ('GET', '/api/admin/products'): CATALOG,
     ('PATCH', '/api/admin/products/{product_id}'): CATALOG,
     ('PUT', '/api/admin/products/{product_id}/gallery'): CATALOG,
@@ -32,10 +32,10 @@ ROUTE_ROLES = {
     ('POST', '/api/admin/import/preview'): CATALOG,
     ('GET', '/api/admin/import/history'): CATALOG,
     ('POST', '/api/admin/prom/preview'): CATALOG,
-    ('POST', '/api/admin/prom/apply'): CATALOG,
+    ('POST', '/api/admin/prom/apply'): OWNER,  # may overwrite supplier prices
     ('GET', '/api/admin/bulk/catalog'): CATALOG,
     ('POST', '/api/admin/bulk/preview'): CATALOG,
-    ('POST', '/api/admin/bulk/apply'): CATALOG,
+    ('POST', '/api/admin/bulk/apply'): OWNER,  # may change many SKU prices
     ('GET', '/api/admin/catalog32'): CATALOG,
     ('GET', '/api/admin/catalog32/{product_id}'): CATALOG,
     ('GET', '/api/admin/categories32'): CATALOG,
@@ -84,6 +84,19 @@ ROUTE_ROLES = {
 }
 
 
+# In the strict staging rehearsal, connector endpoints which can contact real
+# third parties are disabled even for owners. Explicit sync tests use synthetic
+# mocks on a separate fixture, never external provider credentials.
+EXTERNAL_NETWORK_ROUTES = frozenset({
+    ('GET', '/api/admin/connectors41/keycrm/sources'),
+    ('POST', '/api/admin/connectors41/keycrm/refresh/{order_id}'),
+    ('POST', '/api/admin/connectors41/keycrm/sync/{order_id}'),
+    ('GET', '/api/admin/connectors41/nova-poshta/tracking/{order_id}'),
+    ('POST', '/api/admin/connectors41/nova-poshta/sync/{order_id}'),
+})
+
+
+
 def strict_rbac_enabled():
     return os.getenv('BEERSHOP_V91_ENFORCE_RBAC') == '1'
 
@@ -111,4 +124,6 @@ def authorize_legacy_admin_request(*, request, authorization, db, user_model,
     allowed = allowed_roles_for(request.method, template)
     if not allowed or user.role not in allowed:
         raise HTTPException(403, 'Insufficient role or unregistered admin route')
+    if (request.method, template) in EXTERNAL_NETWORK_ROUTES:
+        raise HTTPException(503, 'External provider requests disabled in staging')
     return user
