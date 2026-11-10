@@ -37,6 +37,11 @@ def test_scoped_readiness_token_has_no_other_admin_access(monkeypatch):
         for value in ['a'*31,'']:
             monkeypatch.setenv('BEERSHOP_V9_AUDIT_TOKEN',value)
             assert c.get('/api/admin/v9/readiness',headers=AUDIT).status_code==401
+        # A mistaken duplicate token must fail closed rather than silently
+        # elevate a supposedly read-only auditor to full administrator.
+        monkeypatch.setenv('BEERSHOP_V9_AUDIT_TOKEN','t'*40)
+        assert c.get('/api/admin/orders',headers=ADMIN).status_code==503
+        assert c.get('/api/admin/v9/readiness',headers=ADMIN).status_code==503
     monkeypatch.delenv('BEERSHOP_V9_AUDIT_TOKEN',raising=False)
 
 
