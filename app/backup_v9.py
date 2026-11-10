@@ -153,9 +153,10 @@ def rehearsal_restore_new_sqlite(source, metadata, target_path):
             not resolved_parent.is_dir() or target.exists()):
         raise UnsafeBackup('Restore requires a NEW .db file under the local temp directory')
 
-    # Exclusive creation ensures an existing database is not accidentally replaced.
-    with target.open('xb'):
-        pass
+    # Exclusive creation with 0600 permissions: the rehearsal DB can contain
+    # real customer PII and must not be readable by other local users.
+    fd = os.open(str(target), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
     engine = None
     try:
         engine = create_engine('sqlite:///' + str(target))
