@@ -30,18 +30,17 @@ def calls_dep(node, wanted):
 
 def test_admin_routes_have_exact_fail_closed_policy():
     declared=set()
-    for route in main.app.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        # Full inventory, including routers mounted with router-wide Depends(auth).
-        # Dependable.call identity differs for included routers across FastAPI
-        # versions, so mapping every actual path is safer than relying only
-        # on a matching callable object.
-        if (route.path.startswith('/api/admin/') and
-            not route.path.startswith('/api/admin/v9/staff/') and
-            route.path != '/api/admin/v9/readiness'):
-            for method in route.methods:
-                declared.add((method, route.path))
+    # Routers from CRM/inventory are registered during the app's staging
+    # lifespan; collect them after startup rather than at bare module import.
+    with TestClient(main.app):
+        for route in main.app.routes:
+            if not isinstance(route, APIRoute):
+                continue
+            if (route.path.startswith('/api/admin/') and
+                not route.path.startswith('/api/admin/v9/staff/') and
+                route.path != '/api/admin/v9/readiness'):
+                for method in route.methods:
+                    declared.add((method, route.path))
     assert declared == set(ROUTE_ROLES), {
         'missing_policy': sorted(declared - set(ROUTE_ROLES)),
         'stale_policy': sorted(set(ROUTE_ROLES) - declared)
