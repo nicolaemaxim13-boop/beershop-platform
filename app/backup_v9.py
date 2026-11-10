@@ -147,9 +147,10 @@ def rehearsal_restore_new_sqlite(source, metadata, target_path):
         source = json.loads(source)
     target = Path(target_path).absolute()
     temp_root = Path(tempfile.gettempdir()).resolve()
+    resolved_parent = target.parent.resolve()
     if (target.suffix != '.db' or target.is_symlink() or
-            temp_root not in target.parents or not target.parent.is_dir() or
-            target.exists()):
+            not resolved_parent.is_relative_to(temp_root) or
+            not resolved_parent.is_dir() or target.exists()):
         raise UnsafeBackup('Restore requires a NEW .db file under the local temp directory')
 
     # Exclusive creation ensures an existing database is not accidentally replaced.
