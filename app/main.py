@@ -1205,6 +1205,21 @@ def staff_v9_styles():
                         headers={'Cache-Control':'no-store'})
 
 
+@app.get('/api/v91/features')
+def v91_features():
+    # Public non-secret feature signal so the legacy admin UI can hide
+    # obsolete external CRM panels in strict isolated staging only.
+    return {'own_crm_only': strict_rbac_enabled(),
+            'crm_name': 'BeerShop CRM'}
+
+
+@app.get('/assets/own-crm-v91.js')
+def own_crm_v91_script():
+    return FileResponse(ROOT / 'web' / 'own-crm-v91.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
 @app.get('/assets/readiness-v9.js')
 def sales_readiness_js_v9():
     return FileResponse(ROOT / 'web' / 'readiness-v9.js',
