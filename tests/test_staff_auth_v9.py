@@ -73,8 +73,9 @@ def test_roles_and_encrypted_seed_and_revocation(staff_env):
             assert owner.password_hash.startswith('$argon2id$')
             assert _seed(owner_uri) not in owner.mfa_ciphertext
             assert owner.mfa_ciphertext.startswith('gAAAAA')
+        owner_code = _code(owner_uri)
         login = client.post('/api/admin/v9/staff/login', json={
-            'username': owner_name, 'password': STRONG, 'otp': _code(owner_uri)})
+            'username': owner_name, 'password': STRONG, 'otp': owner_code})
         assert login.status_code == 200, login.text
         result=login.json()
         assert result['role']=='owner' and result['expires_in']==900
@@ -88,7 +89,7 @@ def test_roles_and_encrypted_seed_and_revocation(staff_env):
             assert re.fullmatch(r'[0-9a-f]{64}',session.token_hash)
         # A successfully used TOTP code must never authorize a second login.
         replay=client.post('/api/admin/v9/staff/login', json={
-            'username': owner_name,'password':STRONG,'otp':_code(owner_uri)})
+            'username': owner_name,'password':STRONG,'otp':owner_code})
         assert replay.status_code == 401
         owner_headers=_auth(owner_token)
         assert client.get('/api/admin/v9/staff/me',headers=owner_headers).json()['role']=='owner'
