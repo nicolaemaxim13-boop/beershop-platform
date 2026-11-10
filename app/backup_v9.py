@@ -6,6 +6,7 @@ Never print their contents, upload them to public services or restore onto Neon.
 import hashlib
 import json
 import os
+import secrets
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,7 +125,7 @@ def verify_snapshot(source, metadata):
     if integrity.get('counts') != dict(sorted(counts.items())):
         raise UnsafeBackup('Snapshot row counts do not match')
     digest = _checksum(tables)
-    if not hashlib.compare_digest(digest, integrity['sha256']) if hasattr(hashlib, 'compare_digest') else digest != integrity['sha256']:
+    if not secrets.compare_digest(digest, integrity['sha256']):
         raise UnsafeBackup('Snapshot SHA256 mismatch')
     if not any(r.get('id') == 1 for r in tables['stores']):
         raise UnsafeBackup('Store 1 missing from snapshot')
