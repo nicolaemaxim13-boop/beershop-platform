@@ -45,6 +45,41 @@
       : '<span class="product-image-fallback" role="img" aria-label="Фотографія ще не додана">⚙️</span>';
   }
 
+  function galleryUrls(product) {
+    const raw = Array.isArray(product.images) && product.images.length
+      ? product.images : [product.image_url];
+    return [...new Set(raw.filter(url => typeof url === 'string' &&
+        (/^https:\/\//i.test(url) || url.startsWith('/assets/') ||
+         /^\/uploads\/[0-9a-f]{32}\.(jpg|png|webp)$/.test(url))))].slice(0, 6);
+  }
+  function galleryMarkup(product) {
+    const photos = galleryUrls(product);
+    const thumbnails = photos.length > 1
+      ? '<div class="product-gallery-thumbs" role="group" aria-label="Фотографії товару">' +
+        photos.map((url, index) => '<button class="product-gallery-thumb" type="button" data-photo-index="' +
+          index + '" aria-label="Переглянути фото ' + (index + 1) +
+          '" aria-pressed="' + (index === 0 ? 'true' : 'false') + '">' +
+          '<img src="' + safe(url) + '" alt="" loading="lazy" decoding="async"></button>').join('') + '</div>'
+      : '';
+    return '<div class="product-gallery">' +
+      '<div class="product-detail-art" id="detail-main-photo">' + imageMarkup(product) + '</div>' +
+      thumbnails + (photos.length > 1 ? '<p class="product-gallery-count" id="detail-photo-count">Фото 1 із ' +
+        photos.length + '</p>' : '') + '</div>';
+  }
+  function switchGalleryPhoto(product, index) {
+    const photos = galleryUrls(product);
+    if (index < 0 || index >= photos.length) return;
+    const art = document.getElementById('detail-main-photo');
+    if (!art) return;
+    art.innerHTML = '<img src="' + safe(photos[index]) + '" alt="' +
+      safe(product.name) + ', фото ' + (index + 1) + '" loading="eager" decoding="async">';
+    document.querySelectorAll('.product-gallery-thumb').forEach(button =>
+      button.setAttribute('aria-pressed', String(Number(button.dataset.photoIndex) === index)));
+    const counter = document.getElementById('detail-photo-count');
+    if (counter) counter.textContent = 'Фото ' + (index + 1) + ' із ' + photos.length;
+    checkFailedImages(art);
+  }
+
   function primaryVariant(product) {
     return (product.variants || []).find(v => v.active && v.stock > 0) ||
            (product.variants || []).find(v => v.active) || null;
@@ -260,7 +295,7 @@
     const category = categories.find(c => c.id === product.category_id);
     section.innerHTML =
       '<a class="back-link" href="/#catalog">← Назад до каталогу</a>' +
-      '<div class="product-detail-grid"><div class="product-detail-art">' + imageMarkup(product) + '</div>' +
+      '<div class="product-detail-grid">' + galleryMarkup(product) +
       '<div class="product-detail-info"><p class="tag">BeerShop / ' + safe(category?.name || 'Обладнання') + '</p>' +
       '<h1>' + safe(product.name) + '</h1><p class="product-description">' + safe(product.description || 'Професійне обладнання для розливу пива.') + '</p>' +
       '<label for="detail-variant">Варіант / артикул</label><select id="detail-variant" onchange="updateDetailChoice()">' +
@@ -273,6 +308,8 @@
       '</div></div>';
     section.classList.remove('hidden');
     checkFailedImages(section);
+    section.querySelectorAll('[data-photo-index]').forEach(button =>
+      button.addEventListener('click', () => switchGalleryPhoto(product, Number(button.dataset.photoIndex))));
     document.getElementById('detail-variant').addEventListener('change', updateDetailChoice);
     document.getElementById('detail-compare').addEventListener('click', () => toggleCompare(product));
     document.title = product.name + ' — BeerShop';
