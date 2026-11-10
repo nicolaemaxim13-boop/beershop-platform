@@ -46,7 +46,7 @@
         groups.get(check.group).push(check);
       }
       for(const [group,checks] of groups) {
-        const section=add(host,'section','readiness-group');
+        const section=add(host,'div','readiness-group');
         add(section,'h3','',names[group]||group);
         for(const check of checks){
           const item=add(section,'article','readiness-check '+check.status);
