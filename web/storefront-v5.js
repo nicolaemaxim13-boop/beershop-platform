@@ -6,6 +6,33 @@
   let detailProduct = null;
   let debounce = null;
 
+  // Imported product image URLs sometimes return 403/404. The browser must
+  // never render their lengthy alt strings at the old oversized art font.
+  function imageFailed(img) {
+    const parent = img.parentElement;
+    if (!parent || !parent.matches('.art, .product-detail-art, .compare-photo')) return;
+    img.hidden = true;
+    if (parent.querySelector('.image-error-fallback')) return;
+    const placeholder = document.createElement('span');
+    placeholder.className = 'image-error-fallback';
+    placeholder.setAttribute('role', 'img');
+    placeholder.setAttribute('aria-label', 'Фото товару недоступне');
+    const symbol = document.createElement('span');
+    symbol.textContent = '📦';
+    symbol.setAttribute('aria-hidden', 'true');
+    const caption = document.createElement('small');
+    caption.textContent = 'Фото недоступне';
+    placeholder.append(symbol, caption);
+    parent.appendChild(placeholder);
+  }
+  document.addEventListener('error', event => {
+    if (event.target instanceof HTMLImageElement) imageFailed(event.target);
+  }, true);
+  function checkFailedImages(root) {
+    root.querySelectorAll('.art img, .product-detail-art img, .compare-photo img')
+      .forEach(img => { if (img.complete && img.naturalWidth === 0) imageFailed(img); });
+  }
+
   function imageUrl(product) {
     const src = typeof product.image_url === 'string' ? product.image_url.trim() : '';
     return (/^https:\/\//i.test(src) || src.startsWith('/assets/') || src.startsWith('/uploads/')) ? src : '';
@@ -32,6 +59,7 @@
     const tray = document.getElementById('compare-tray');
     if (!tray) return;
     tray.classList.toggle('hidden', selected.size === 0);
+    document.body.classList.toggle('has-compare', selected.size > 0);
     document.getElementById('compare-count').textContent = String(selected.size);
     document.getElementById('compare-go').disabled = selected.size < 2;
     document.getElementById('compare-hint').textContent = selected.size < 2
@@ -50,11 +78,38 @@
     updateCompareTray();
   }
 
+  function syncCardStock(card, product) {
+    const selectedId = Number(card.querySelector('.variants')?.value || 0);
+    const variant = (product.variants || []).find(v => v.id === selectedId) || primaryVariant(product);
+    const availability = card.querySelector('.product-stock-badge');
+    const available = Boolean(variant && variant.active && Number(variant.stock) > 0);
+    if (availability) {
+      availability.textContent = available ? '● У наявності · ' + variant.stock + ' шт.' : '○ Немає в наявності';
+      availability.classList.toggle('is-out', !available);
+    }
+    const addButton = card.querySelector('.row button');
+    if (addButton) addButton.disabled = !available;
+  }
+
   function decorateCatalog() {
     const cards = [...document.querySelectorAll('#cards .card')];
     cards.forEach((card, i) => {
       const product = products[i];
       if (!product) return;
+      const media = card.querySelector('.art');
+      const stockBadge = document.createElement('span');
+      stockBadge.className = 'product-stock-badge';
+      media?.appendChild(stockBadge);
+      const heading = card.querySelector('h3');
+      if (heading) {
+        const titleLink = document.createElement('a');
+        titleLink.href = '/products/' + encodeURIComponent(product.slug);
+        titleLink.textContent = heading.textContent;
+        heading.replaceChildren(titleLink);
+      }
+      const description = card.querySelector('p.muted');
+      if (description) description.title = product.description || '';
+      syncCardStock(card, product);
       const existing = card.querySelector('.product-actions');
       if (existing) existing.remove();
       const actions = document.createElement('div');
@@ -72,6 +127,7 @@
       actions.append(link, button);
       card.append(actions);
     });
+    checkFailedImages(document.getElementById('cards'));
     updateCompareTray();
   }
 
@@ -158,6 +214,7 @@
     }
     markup += '</div>';
     document.getElementById('compare-content').innerHTML = markup;
+    checkFailedImages(document.getElementById('compare-content'));
     document.getElementById('compare-dialog').showModal();
   };
   window.closeCompare = function () {
@@ -215,6 +272,7 @@
       '<p class="muted">Ціна в гривнях уточнюється при оформленні замовлення. Оплата — тільки після підтвердження менеджером.</p>' +
       '</div></div>';
     section.classList.remove('hidden');
+    checkFailedImages(section);
     document.getElementById('detail-variant').addEventListener('change', updateDetailChoice);
     document.getElementById('detail-compare').addEventListener('click', () => toggleCompare(product));
     document.title = product.name + ' — BeerShop';
@@ -222,6 +280,13 @@
     updateCompareTray();
   }
   window.updateDetailChoice = updateDetailChoice;
+  const legacyUpdatePrice = updatePrice;
+  updatePrice = function (productId) {
+    legacyUpdatePrice(productId);
+    const card = document.querySelector('#cards .card #variant-' + productId)?.closest('.card');
+    const product = products.find(p => p.id === productId);
+    if (card && product) syncCardStock(card, product);
+  };
 
   async function loadProductPage() {
     if (!location.pathname.startsWith('/products/')) return;

@@ -1,0 +1,283 @@
+/* BeerShop storefront v6: calm, readable catalog and resilient imported product images.
+ * Loads AFTER legacy and v5 rules. No changes to prices, stock or checkout logic.
+ */
+:root{
+  --shop-page:#f5f7f2;
+  --shop-ink:#173429;
+  --shop-green:#164531;
+  --shop-border:#e0e8df;
+  --shop-subtle:#60776b;
+  --shop-lime:#daf879;
+  --shop-focus:#276d50;
+}
+body{background:var(--shop-page);color:var(--shop-ink);text-wrap:pretty}
+header{z-index:22;padding-block:15px;border-color:var(--shop-border)}
+header .logo{font-size:clamp(19px,2vw,25px);letter-spacing:-.06em}
+#cart-toggle{background:var(--shop-lime);color:#193d26;border-radius:12px}
+.hero{padding-block:clamp(52px,6vw,105px)}
+.hero h1{letter-spacing:-.062em;text-wrap:balance}
+main#catalog{max-width:1540px;padding-top:clamp(28px,3.8vw,55px)}
+#catalog>.row:first-child{margin-bottom:12px}
+#catalog h2{letter-spacing:-.055em}
+#catalog .tools{grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:12px;margin-bottom:14px}
+#catalog .tools input,#catalog .tools select{border:1px solid #d5dfd5;box-shadow:0 2px 10px #143b2207}
+#catalog .cards{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:clamp(14px,1.6vw,24px);
+  align-items:stretch;
+}
+#catalog .card{
+  min-width:0;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  padding:clamp(13px,1.3vw,18px);
+  border:1px solid var(--shop-border);
+  border-radius:21px;
+  box-shadow:0 5px 23px #0d332012;
+  background:#fff;
+  transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;
+}
+#catalog .card:hover{
+  transform:translateY(-3px);
+  border-color:#c4d8c8;
+  box-shadow:0 16px 34px #0d33201c;
+}
+#catalog .card .art{
+  position:relative;
+  display:grid;
+  place-items:center;
+  overflow:hidden;
+  isolation:isolate;
+  width:100%;
+  height:auto;
+  aspect-ratio:4/3;
+  min-height:0;
+  max-height:none;
+  border:1px solid #ecf0eb;
+  border-radius:14px;
+  background:linear-gradient(155deg,#f4f7f3,#eaf1ea);
+  font-size:0; /* Broken <img> alt text must never inherit the old 70px art size. */
+}
+#catalog .card .art img{
+  position:absolute;
+  inset:0;
+  display:block;
+  width:100%;
+  height:100%;
+  max-height:none;
+  padding:clamp(12px,1.8vw,22px);
+  object-fit:contain;
+  font-size:0;
+  line-height:0;
+  border-radius:0;
+}
+#catalog .card .art img[hidden]{display:none!important}
+#catalog .card .art>.image-error-fallback,
+.product-detail-art>.image-error-fallback,
+.compare-photo>.image-error-fallback{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  height:100%;
+  padding:20px;
+  font-size:clamp(34px,3vw,55px);
+  line-height:1;
+  color:#587662;
+  text-align:center;
+}
+#catalog .card .art>.image-error-fallback small,
+.product-detail-art>.image-error-fallback small,
+.compare-photo>.image-error-fallback small{
+  font-size:12px;
+  font-weight:600;
+  letter-spacing:0;
+  line-height:1.3;
+}
+#catalog .card .product-stock-badge{
+  position:absolute;
+  top:11px;
+  left:11px;
+  z-index:1;
+  display:inline-flex;
+  align-items:center;
+  max-width:calc(100% - 22px);
+  padding:7px 11px;
+  border-radius:30px;
+  color:#215e3f;
+  background:#ecf9efee;
+  border:1px solid #d0e9d6;
+  font-size:12px;
+  line-height:1.2;
+  font-weight:750;
+  white-space:normal;
+  box-shadow:0 2px 8px #0d332010;
+}
+#catalog .card .product-stock-badge.is-out{
+  background:#f4f5f3ef;
+  border-color:#d9dcd7;
+  color:#77827b;
+}
+#catalog .card>.tag{
+  color:#718078;
+  font-size:11px;
+  letter-spacing:.07em;
+  margin:15px 0 5px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+#catalog .card h3{
+  font-size:clamp(16px,1.15vw,19px);
+  line-height:1.35;
+  font-weight:760;
+  letter-spacing:-.02em;
+  margin:1px 0 8px;
+  min-height:2.7em;
+  max-height:2.7em;
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+  line-clamp:2;
+  overflow:hidden;
+  overflow-wrap:anywhere;
+}
+#catalog .card h3 a{color:#173c2c;text-decoration:none}
+#catalog .card h3 a:hover{text-decoration:underline;text-decoration-thickness:1px}
+#catalog .card p.muted{
+  flex:0 0 auto;
+  display:-webkit-box;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:3;
+  line-clamp:3;
+  overflow:hidden;
+  min-height:4.35em;
+  max-height:4.35em;
+  margin:3px 0 13px;
+  font-size:13px;
+  line-height:1.45;
+  color:var(--shop-subtle);
+  overflow-wrap:anywhere;
+}
+#catalog .card .variants{
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  min-height:43px;
+  padding:9px 10px;
+  margin:auto 0 13px;
+  border-radius:9px;
+  background:#f7f9f6;
+  color:#375044;
+  font-size:12px;
+  text-overflow:ellipsis;
+}
+#catalog .card .row{
+  margin-top:0;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:10px;
+  width:100%;
+}
+#catalog .card .price{
+  font-size:clamp(18px,1.65vw,24px);
+  font-weight:800;
+  line-height:1.12;
+  letter-spacing:-.04em;
+  overflow-wrap:anywhere;
+  font-variant-numeric:tabular-nums;
+}
+#catalog .card .row>button{
+  min-height:43px;
+  padding:10px 13px;
+  white-space:nowrap;
+  font-size:13px;
+  border-radius:10px;
+}
+#catalog .card .row>button:disabled{background:#e9ebe7;color:#8a918b;opacity:1}
+#catalog .card .product-actions{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:8px;
+  width:100%;
+  padding-top:12px;
+  margin-top:12px;
+  border-top:1px solid #edf0eb;
+}
+#catalog .card .product-actions>*{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  width:100%;
+  min-width:0;
+  min-height:41px;
+  padding:8px 8px;
+  flex:initial;
+  border-radius:9px;
+  font-size:12px;
+  line-height:1.25;
+  text-align:center;
+  white-space:normal;
+}
+#catalog .card .product-link{color:#205d42;background:#ebf5ed}
+#catalog .card .compare-toggle{background:#fff}
+.category-pills{margin:8px 0 3px}
+.filter-actions{margin:0 0 22px}
+.stock-toggle{font-size:13px}
+.compare-tray{
+  z-index:15;
+  left:auto;
+  right:clamp(12px,2vw,28px);
+  bottom:calc(14px + env(safe-area-inset-bottom));
+  transform:none;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  width:min(385px,calc(100vw - 24px));
+  gap:10px 12px;
+  padding:12px 14px;
+  border-radius:14px;
+  box-shadow:0 9px 28px #09241642;
+}
+.compare-tray .compare-text{grid-column:1/-1;flex:none;font-size:13px}
+.compare-tray .compare-text small{font-size:11px;margin-top:1px}
+.compare-tray button{min-height:37px;padding:9px 12px;font-size:12px}
+.compare-tray #compare-go{grid-column:1}
+.compare-tray .compare-clear{grid-column:2}
+body.has-compare #catalog{padding-bottom:140px}
+.cart{z-index:52}
+.overlay{z-index:50}
+.compare-dialog{z-index:55}
+.product-detail-art{position:relative;font-size:0}
+.product-detail-art img,.compare-photo img{font-size:0}
+.product-detail-art img[hidden],.compare-photo img[hidden]{display:none!important}
+.compare-photo{position:relative}
+.compare-photo>.image-error-fallback{font-size:28px;padding:6px}
+.compare-photo>.image-error-fallback small{font-size:10px}
+@media(min-width:1950px){#catalog .cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:1100px){#catalog .cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){
+  #catalog .tools{grid-template-columns:minmax(0,1fr)}
+  #catalog .cards{grid-template-columns:minmax(0,1fr);gap:13px}
+  #catalog .card{max-width:620px;width:100%;margin-inline:auto;border-radius:16px;padding:14px}
+  #catalog .card .art{aspect-ratio:16/10}
+  #catalog .card h3{font-size:18px}
+  #catalog .card p.muted{font-size:13px}
+  #catalog .card .price{font-size:22px}
+  #catalog .card .row{grid-template-columns:minmax(0,1fr) auto}
+  .compare-tray{width:min(355px,calc(100vw - 20px));right:10px;padding:10px 12px}
+  body.has-compare #catalog{padding-bottom:145px}
+}
+@media(max-width:370px){
+  #catalog .card .product-actions{grid-template-columns:1fr}
+  #catalog .card .price{font-size:19px}
+  #catalog .card .row>button{padding:9px;font-size:12px}
+}
+@media(prefers-reduced-motion:reduce){
+  #catalog .card{transition:none}
+  #catalog .card:hover{transform:none}
+}
