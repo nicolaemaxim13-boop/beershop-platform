@@ -60,18 +60,19 @@ def build_report(db, *, Product, Variant, Order, OrderItem, PricingPolicy,
     missing_images = count(select(func.count()).select_from(Product).where(
         Product.store_id == 1, Product.active.is_(True),
         (Product.image_url == '') | Product.image_url.is_(None)))
+    R = Reservation.c if hasattr(Reservation, 'c') else Reservation
     reserved_lines = count(select(func.count()).select_from(Reservation).where(
-        Reservation.state == 'reserved'))
-    reserved_units = count(select(func.coalesce(func.sum(Reservation.quantity), 0)).where(
-        Reservation.state == 'reserved'))
+        R.state == 'reserved'))
+    reserved_units = count(select(func.coalesce(func.sum(R.quantity), 0)).where(
+        R.state == 'reserved'))
     # Reservations should correspond to an existing order line with equal qty.
     mismatches = count(select(func.count()).select_from(Reservation).
-        outerjoin(OrderItem, OrderItem.id == Reservation.item_id).
-        outerjoin(Order, Order.id == Reservation.order_id).
+        outerjoin(OrderItem, OrderItem.id == R.item_id).
+        outerjoin(Order, Order.id == R.order_id).
         where((OrderItem.id.is_(None)) | (Order.id.is_(None)) |
-              (OrderItem.order_id != Reservation.order_id) |
-              (OrderItem.variant_id != Reservation.variant_id) |
-              (OrderItem.quantity != Reservation.quantity)))
+              (OrderItem.order_id != R.order_id) |
+              (OrderItem.variant_id != R.variant_id) |
+              (OrderItem.quantity != R.quantity)))
     orders = count(select(func.count()).select_from(Order).where(Order.store_id == 1))
     unpaid = count(select(func.count()).select_from(Order).where(
         Order.store_id == 1, Order.payment_status == 'unpaid',
@@ -164,7 +165,7 @@ def build_report(db, *, Product, Variant, Order, OrderItem, PricingPolicy,
                 for kind in ('pass', 'warn', 'block')}
     return {
         'mode': 'READ_ONLY_AUDIT',
-        'sales_ready': False if counters['block'] else None,  # Never self-certify legal/bank readiness.
+        'sales_ready': False,  # Never self-certify legal/bank readiness.
         'sales_ready_note': 'Ні. Звіт не підтверджує право приймати реальні платежі.',
         'checked_at': now.isoformat(),
         'summary': {
