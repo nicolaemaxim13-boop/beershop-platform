@@ -259,6 +259,24 @@ def auth(authorization: Annotated[str | None, Header()] = None):
     provided = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
     if not secrets.compare_digest(token, provided): raise HTTPException(401, 'Unauthorized')
 
+
+def auth_readiness(authorization: Annotated[str | None, Header()] = None):
+    """Least-privilege audit token: may view readiness only, never orders or PII.
+
+    Legacy admin authentication remains unchanged. This is NOT an MFA or
+    multi-user implementation; the scope is intentionally one fixed endpoint.
+    """
+    admin = os.getenv('BEERSHOP_ADMIN_TOKEN', '')
+    if len(admin) < 32:
+        raise HTTPException(503, 'Admin token not configured')
+    provided = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
+    if secrets.compare_digest(provided, admin):
+        return
+    audit = os.getenv('BEERSHOP_V9_AUDIT_TOKEN', '')
+    if len(audit) >= 32 and audit != admin and secrets.compare_digest(provided, audit):
+        return
+    raise HTTPException(401, 'Unauthorized')
+
 def retail_unit_price(variant, fx):
     # Single authoritative public selling-price policy for catalog,
     # quote, checkout and order line items. Never change source prices.
@@ -1094,7 +1112,7 @@ def catalog32_css():
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
 
 # Admin-only JSON snapshot. Contains customer PII; requires bearer token.
-@app.get('/api/admin/v9/readiness', dependencies=[Depends(auth)])
+@app.get('/api/admin/v9/readiness', dependencies=[Depends(auth_readiness)])
 def sales_readiness_v9(db: Session = Depends(session)):
     """Read-only: no bank statement lookup, payment updates or stock mutations."""
     return build_report(
