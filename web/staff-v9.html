@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>BeerShop v9 · Безпечний вхід співробітника</title>
+<link rel="stylesheet" href="/assets/staff-v9.css">
+</head>
+<body>
+<main class="shell">
+<header>
+  <div class="brand">🍺 <strong>BeerShop</strong> <span>Security Lab · v9</span></div>
+  <p class="tag">ІЗОЛЬОВАНИЙ STAGING · НЕ ПРИЗНАЧЕНО ДЛЯ РЕАЛЬНИХ ПРОДАЖІВ</p>
+  <h1>Персональний вхід співробітника</h1>
+  <p>Пароль + одноразовий 6-значний код із застосунку автентифікації. Доступ тільки до тестових функцій із дозволеною роллю. Старий адміністративний токен не приймається.</p>
+</header>
+<section id="login-panel" class="panel">
+<h2>Увійти</h2>
+<form id="staff-login" autocomplete="off">
+<label for="staff-username">Логін<input id="staff-username" name="username" minlength="3" maxlength="32" pattern="[a-z][a-z0-9_.-]{2,31}" autocomplete="username" required></label>
+<label for="staff-password">Пароль<input id="staff-password" type="password" name="password" minlength="1" maxlength="256" autocomplete="off" required></label>
+<label for="staff-otp">Код MFA<input id="staff-otp" type="text" name="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
+<button type="submit">Увійти з MFA</button>
+</form>
+</section>
+<section id="session-panel" class="panel" hidden>
+<div class="toolbar">
+  <div><h2>Сесія співробітника</h2><p id="staff-profile" class="muted"></p></div>
+  <button id="staff-logout" class="secondary" type="button">Вийти</button>
+</div>
+<p class="muted">Токен діє максимум 15 хвилин і зберігається лише в пам'яті вкладки. Роль не дозволяє обійти основну авторизацію BeerShop Control.</p>
+<div class="toolbar">
+<button type="button" id="staff-readiness">Аудит готовності</button>
+<button type="button" id="staff-catalog">Підсумок каталогу</button>
+<button type="button" id="staff-orders">Кількість замовлень</button>
+</div>
+<section id="owner-panel" hidden>
+<h3>Створити тестового співробітника</h3>
+<p>Лише роль власника. Новий співробітник отримує окремий пароль і секрет MFA, який відображається один раз.</p>
+<form id="staff-create" autocomplete="off">
+<label for="new-staff-name">Новий логін<input id="new-staff-name" pattern="[a-z][a-z0-9_.-]{2,31}" maxlength="32" required></label>
+<label for="new-staff-password">Початковий пароль (14+ символів)<input id="new-staff-password" type="password" minlength="14" maxlength="128" autocomplete="off" required></label>
+<label for="new-staff-role">Роль
+<select id="new-staff-role"><option value="auditor">Аудитор (лише аудит)</option><option value="catalog">Каталог (лише підсумок)</option><option value="operations">Операції (лише кількості)</option><option value="owner">Власник</option></select>
+</label>
+<button type="submit">Створити тестовий обліковий запис</button>
+</form>
+<div id="mfa-enrollment" hidden>
+<p><strong>Секрет MFA тільки для нового працівника.</strong> Введіть цей URI в застосунок TOTP через захищений канал. Не відправляйте його поштою, не публікуйте і не робіть знімків екрана.</p>
+<textarea id="staff-enrollment-uri" readonly rows="3" aria-label="Одноразовий URI для налаштування MFA"></textarea>
+<button type="button" id="staff-clear-enrollment" class="secondary">Приховати секрет</button>
+</div>
+</section>
+</section>
+<section class="panel output">
+<h2>Результат</h2>
+<p id="staff-status" role="status" aria-live="polite">Режим персонального входу вимкнено за замовчуванням.</p>
+<pre id="staff-output" aria-live="polite"></pre>
+</section>
+<footer>Тестовий модуль BeerShop v9. Без зміни товарів, резервів, платежів або реквізитів.</footer>
+</main>
+<script src="/assets/staff-v9.js"></script>
+</body>
+</html>
