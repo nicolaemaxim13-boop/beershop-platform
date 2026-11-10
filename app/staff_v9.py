@@ -4,9 +4,9 @@ Password: Argon2id. TOTP: RFC 6238 with single-use counters.
 TOTP seeds: Fernet-encrypted with a key kept *outside* the database.
 Sessions: short-lived, SHA-256 hashed random bearer tokens, revocable.
 
-WARNING: These sessions do NOT grant access to existing legacy /api/admin
-endpoints. Those still use the shared admin token until a separately audited
-migration. Do not activate this pilot on production.
+WARNING: Sessions authorize existing legacy /api/admin endpoints ONLY when
+BEERSHOP_V91_ENFORCE_RBAC=1 and staging isolation is explicitly acknowledged.
+All other environments retain the legacy token; do not activate on production.
 """
 import base64
 import hashlib
