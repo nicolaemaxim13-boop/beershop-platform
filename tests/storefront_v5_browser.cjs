@@ -68,7 +68,7 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
     await page.locator('#compare-go').click();
     await page.locator('#compare-dialog').waitFor({state:'visible'});
     assert((await page.locator('#compare-content').textContent()).includes('120W'));
-    assert((await page.locator('#compare-content').textContent()).includes('1200'));
+    assert.match(await page.locator('#compare-content').textContent(), /1[\s\u00a0]?200/);
     await page.getByRole('button', {name:'Закрити порівняння'}).click();
 
     for (const width of [320, 390, 768, 1366]) {
