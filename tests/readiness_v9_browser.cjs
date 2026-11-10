@@ -37,6 +37,19 @@ const token=process.env.CRM_TEST_TOKEN||'t'.repeat(40);
      if(width===390||width===1366)
        await page.screenshot({path:'/tmp/beershop-v9-readiness-'+width+'.png',fullPage:true});
    }
+   // A scoped auditor can connect to readiness, but not admin orders.
+   const scopedToken='a'.repeat(40);
+   const denied=await context.request.get('/api/admin/orders',{
+     headers:{Authorization:'Bearer '+scopedToken}
+   });
+   assert.equal(denied.status(),401);
+   await page.goto('/manage');
+   await page.locator('#token').fill(scopedToken);
+   await page.getByRole('button',{name:'Підключитися'}).click();
+   await page.waitForFunction(() =>
+     document.querySelector('#readiness9-status')?.textContent.includes('НЕ ГОТОВО'),
+     null,{timeout:12000});
+   assert(await page.locator('#readiness9').evaluate(el=>el.classList.contains('active')));
    assert.deepEqual(errors,[],errors.join('; '));
    console.log('BeerShop v9 readiness UI tested at 320/390/768/1366px; read-only and authenticated');
  }finally{await browser.close()}
