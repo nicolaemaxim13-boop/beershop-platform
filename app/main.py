@@ -16,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
-from fastapi import FastAPI, Depends, Header, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, Depends, Header, HTTPException, Query, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
@@ -30,7 +30,8 @@ from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
 from .backup_v9 import add_integrity
-from .staff_v9 import setup_staff_auth, is_enabled as staff_v9_enabled
+from .staff_v9 import setup_staff_auth, is_enabled as staff_v9_enabled, verify_bearer_staff
+from .rbac_v91 import strict_rbac_enabled, require_isolated_staging, authorize_legacy_admin_request
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -255,7 +256,16 @@ app = FastAPI(title='BeerShop Platform', version='4.4.0', lifespan=lifespan)
 def session():
     with SessionLocal() as db: yield db
 
-def auth(authorization: Annotated[str | None, Header()] = None):
+def auth(request: Request,
+         authorization: Annotated[str | None, Header()] = None,
+         db: Session = Depends(session)):
+    # OFF by default: existing production behavior remains unchanged.
+    # ON only for isolated staging: shared admin token is not an MFA bypass.
+    if strict_rbac_enabled():
+        return authorize_legacy_admin_request(
+            request=request, authorization=authorization, db=db,
+            user_model=StaffUserV9, session_model=StaffSessionV9,
+            persistent_url=PERSISTENT_URL)
     token = os.getenv('BEERSHOP_ADMIN_TOKEN', '')
     if len(token) < 32: raise HTTPException(503, 'Admin token not configured')
     if os.getenv('BEERSHOP_V9_AUDIT_TOKEN', '') == token:
@@ -264,12 +274,15 @@ def auth(authorization: Annotated[str | None, Header()] = None):
     if not secrets.compare_digest(token, provided): raise HTTPException(401, 'Unauthorized')
 
 
-def auth_readiness(authorization: Annotated[str | None, Header()] = None):
-    """Least-privilege audit token: may view readiness only, never orders or PII.
-
-    Legacy admin authentication remains unchanged. This is NOT an MFA or
-    multi-user implementation; the scope is intentionally one fixed endpoint.
-    """
+def auth_readiness(authorization: Annotated[str | None, Header()] = None,
+                   db: Session = Depends(session)):
+    """Read-only audit; in strict staging only MFA owner/auditor sessions work."""
+    if strict_rbac_enabled():
+        require_isolated_staging(persistent_url=PERSISTENT_URL)
+        user, _ = verify_bearer_staff(authorization, db, StaffUserV9, StaffSessionV9)
+        if user.role not in ('owner', 'auditor'):
+            raise HTTPException(403, 'Insufficient role')
+        return
     admin = os.getenv('BEERSHOP_ADMIN_TOKEN', '')
     if len(admin) < 32:
         raise HTTPException(503, 'Admin token not configured')
