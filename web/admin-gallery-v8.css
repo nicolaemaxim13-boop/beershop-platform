@@ -1,0 +1,24 @@
+/* Admin gallery v8: comfortable mobile-friendly image selection and ordering */
+.c32gallery-editor{border:1px solid #345b3e;background:#0b2118;border-radius:15px;padding:clamp(12px,2vw,18px);margin:16px 0 20px}
+.c32gallery-editor h4{margin:0 0 10px;font-size:17px;color:#d6f7cb}
+.c32gallery-editor p{line-height:1.6}
+.c32gallery-editor label{display:block;margin-top:12px}
+.c32gallery-editor #c32image,.c32gallery-editor #c32newimage{width:100%;min-width:0}
+.c32gallery{margin:13px 0;display:grid;gap:10px}
+.c32gallery-entry{display:grid;grid-template-columns:72px minmax(0,1fr);gap:10px;align-items:center;padding:10px;border:1px solid #3a5944;border-radius:11px;background:#112b1e;min-width:0}
+.c32gallery-entry>img,.c32gallery-entry>span[role=img]{width:72px;height:72px;object-fit:contain;background:#eaf0e8;border-radius:9px;display:grid;place-items:center;color:#36543b;font-size:28px}
+.c32gallery-info{min-width:0;display:grid;gap:5px}
+.c32gallery-info small{color:#b7d7b7;font-size:12px}
+.c32gallery-info>span{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px;color:#dee8dc}
+.c32gallery-buttons{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1.8fr) repeat(3,minmax(42px,.65fr));gap:7px}
+.c32gallery-buttons button{width:100%;min-height:40px;padding:8px;font-size:12px}
+.c32gallery-buttons button:disabled{opacity:.35;cursor:not-allowed}
+.c32gallery-add{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:9px}
+.c32gallery-add button{min-height:44px;padding:10px}
+#c32gallery-count{margin:9px 0 0;color:#b4deb9}
+@media(max-width:600px){
+  .c32gallery-entry{grid-template-columns:60px minmax(0,1fr)}
+  .c32gallery-entry>img,.c32gallery-entry>span[role=img]{width:60px;height:60px}
+  .c32gallery-add{grid-template-columns:1fr}
+  .c32gallery-add button{width:100%}
+}

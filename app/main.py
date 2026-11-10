@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import create_engine, String, Integer, Numeric, Boolean, ForeignKey, UniqueConstraint, select, text, func, case, or_
+from sqlalchemy import create_engine, String, Integer, Numeric, Boolean, ForeignKey, UniqueConstraint, select, text, func, case, or_, delete
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +59,16 @@ class Product(Base):
     image_url: Mapped[str] = mapped_column(String(500), default='')
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     __table_args__ = (UniqueConstraint('store_id', 'slug'),)
+class ProductImage(Base):
+    __tablename__ = 'product_images'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey('stores.id'), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey('products.id'), index=True)
+    position: Mapped[int] = mapped_column(Integer)
+    image_url: Mapped[str] = mapped_column(String(500))
+    __table_args__ = (UniqueConstraint('product_id', 'position'),)
+
+
 class Variant(Base):
     __tablename__ = 'variants'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -155,11 +165,48 @@ class VariantIn(BaseModel):
     currency: str = Field(default='UAH', pattern='^(UAH|USD)$')
     active: bool = True
 class ProductUpdate(BaseModel):
+    images: list[str] | None = Field(default=None, max_length=6)
     name: str | None = Field(default=None, min_length=2, max_length=200)
     description: str | None = Field(default=None, max_length=4000)
     image_url: str | None = Field(default=None, max_length=500)
     active: bool | None = None
     category_id: int | None = Field(default=None, gt=0)
+
+class GalleryUpdate(BaseModel):
+    # The primary photo stays in products.image_url for backwards compatibility.
+    # This payload replaces the whole ordered gallery (up to 6 URLs).
+    images: list[str] = Field(max_length=6)
+
+
+def validated_gallery_urls(raw_urls):
+    urls = []
+    for raw in raw_urls:
+        if not isinstance(raw, str) or not raw or len(raw) > 500:
+            raise HTTPException(422, 'Кожне фото має містити посилання до 500 символів.')
+        url = raw.strip()
+        if url != raw or any(ord(ch) < 32 for ch in url):
+            raise HTTPException(422, 'URL фото не може мати пробілів або керуючих символів.')
+        if url.startswith('/uploads/'):
+            # Legacy temporary uploads are accepted, but may vanish on Render Free.
+            if not re.fullmatch(r'/uploads/[0-9a-f]{32}\.(jpg|png|webp)', url):
+                raise HTTPException(422, 'Недопустимий шлях тимчасового фото.')
+        else:
+            parsed = urlparse(url)
+            if (parsed.scheme != 'https' or not parsed.hostname or
+                    parsed.username or parsed.password or parsed.fragment or
+                    re.search(r'\s', url)):
+                raise HTTPException(422, 'Для фото потрібне коректне HTTPS-посилання.')
+            try:
+                port = parsed.port
+            except ValueError:
+                raise HTTPException(422, 'Некоректний порт у посиланні фото.')
+            if port not in (None, 443):
+                raise HTTPException(422, 'Фото дозволено лише за HTTPS на стандартному порту.')
+        if url in urls:
+            raise HTTPException(422, 'Однакові фото не можна додавати двічі.')
+        urls.append(url)
+    return urls
+
 
 class PaymentUpdate(BaseModel):
     payment_status: str
@@ -219,8 +266,18 @@ def variant_dict(v, fx=None):
     return data
 
 def product_dict(db, p, fx=None):
-    return {'id': p.id, 'slug': p.slug, 'name': p.name, 'description': p.description, 'category_id': p.category_id, 'image_url': p.image_url, 'active': p.active,
-            'variants': [variant_dict(v, fx=fx) for v in db.scalars(select(Variant).where(Variant.product_id == p.id, Variant.store_id == 1).order_by(Variant.id)).all()]}
+    extras = db.scalars(select(ProductImage).where(
+        ProductImage.store_id == 1, ProductImage.product_id == p.id
+    ).order_by(ProductImage.position, ProductImage.id)).all()
+    images = []
+    for url in [p.image_url] + [row.image_url for row in extras]:
+        if url and url not in images:
+            images.append(url)
+    return {'id': p.id, 'slug': p.slug, 'name': p.name, 'description': p.description,
+            'category_id': p.category_id, 'image_url': p.image_url,
+            'images': images[:6], 'active': p.active,
+            'variants': [variant_dict(v, fx=fx) for v in db.scalars(select(Variant).where(
+                Variant.product_id == p.id, Variant.store_id == 1).order_by(Variant.id)).all()]}
 
 def order_dict(db, o):
     lines = db.scalars(select(OrderItem).where(OrderItem.order_id == o.id)).all()
@@ -612,16 +669,50 @@ def storefront_product_page(slug: str, db: Session = Depends(session)):
 def admin_products(db: Session = Depends(session)):
     return [product_dict(db, p) for p in db.scalars(select(Product).where(Product.store_id == 1).order_by(Product.id.desc()).limit(5000)).all()]
 
+def _store_product_gallery(db, p, urls):
+    p.image_url = urls[0] if urls else ''
+    db.execute(delete(ProductImage).where(ProductImage.store_id == 1,
+                                          ProductImage.product_id == p.id))
+    db.flush()
+    for index, url in enumerate(urls[1:], start=1):
+        db.add(ProductImage(store_id=1, product_id=p.id, position=index, image_url=url))
+
+
 @app.patch('/api/admin/products/{product_id}', dependencies=[Depends(auth)])
 def edit_product(product_id: int, data: ProductUpdate, db: Session = Depends(session)):
     p = db.get(Product, product_id)
     if not p or p.store_id != 1: raise HTTPException(404, 'Product not found')
-    for key, val in data.model_dump(exclude_unset=True).items():
+    fields = data.model_dump(exclude_unset=True)
+    requested_images = fields.pop('images', None)
+    if requested_images is not None:
+        urls = validated_gallery_urls(requested_images)
+        if 'image_url' in fields and fields['image_url'] != (urls[0] if urls else ''):
+            raise HTTPException(422, 'Головне фото та галерея мають збігатися.')
+        fields.pop('image_url', None)
+    for key, val in fields.items():
         if val is None: raise HTTPException(422, 'Null not allowed')
         setattr(p, key, val)
-    if not db.scalar(select(Category).where(Category.id == p.category_id, Category.store_id == 1)): raise HTTPException(422, 'Invalid category')
+    if not db.scalar(select(Category).where(Category.id == p.category_id, Category.store_id == 1)):
+        raise HTTPException(422, 'Invalid category')
+    if requested_images is not None:
+        _store_product_gallery(db, p, urls)
     db.commit()
     return product_dict(db, p)
+
+@app.put('/api/admin/products/{product_id}/gallery', dependencies=[Depends(auth)])
+def update_product_gallery(product_id: int, data: GalleryUpdate,
+                           db: Session = Depends(session)):
+    urls = validated_gallery_urls(data.images)
+    product = db.scalar(select(Product).where(
+        Product.store_id == 1, Product.id == product_id).with_for_update())
+    if product is None:
+        raise HTTPException(404, 'Product not found')
+    # All-or-nothing transaction: preserve primary image_url for older clients.
+    _store_product_gallery(db, product, urls)
+    db.commit()
+    db.refresh(product)
+    return product_dict(db, product)
+
 
 @app.patch('/api/admin/orders/{order_id}/payment', dependencies=[Depends(auth)])
 def set_payment(order_id: int, data: PaymentUpdate, db: Session = Depends(session)):
@@ -955,6 +1046,19 @@ def rename_category(category_id: int, payload: CategoryRename, db: Session = Dep
     db.commit()
     return {'id':c.id,'slug':c.slug,'name':c.name}
 
+@app.get('/assets/admin-gallery-v8.js')
+def admin_gallery_v8_js():
+    return FileResponse(ROOT / 'web' / 'admin-gallery-v8.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/assets/admin-gallery-v8.css')
+def admin_gallery_v8_css():
+    return FileResponse(ROOT / 'web' / 'admin-gallery-v8.css', media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
 @app.get('/assets/admin-catalog32.js')
 def catalog32_js():
     return FileResponse(ROOT / 'web' / 'admin-catalog32.js', media_type='application/javascript',
@@ -994,6 +1098,12 @@ def maintenance_export(db: Session = Depends(session)):
 def backup_js():
     return FileResponse(ROOT / 'web' / 'admin-backup.js', media_type='application/javascript',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+@app.get('/assets/storefront-gallery-v8.css')
+def public_storefront_gallery_v8():
+    return FileResponse(ROOT / 'web' / 'storefront-gallery-v8.css', media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
 
 @app.get('/assets/storefront-v7.css')
 def public_storefront_v7_css():
