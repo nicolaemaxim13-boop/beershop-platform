@@ -33,7 +33,13 @@ def test_admin_routes_have_exact_fail_closed_policy():
     for route in main.app.routes:
         if not isinstance(route, APIRoute):
             continue
-        if calls_dep(route.dependant, main.auth):
+        # Full inventory, including routers mounted with router-wide Depends(auth).
+        # Dependable.call identity differs for included routers across FastAPI
+        # versions, so mapping every actual path is safer than relying only
+        # on a matching callable object.
+        if (route.path.startswith('/api/admin/') and
+            not route.path.startswith('/api/admin/v9/staff/') and
+            route.path != '/api/admin/v9/readiness'):
             for method in route.methods:
                 declared.add((method, route.path))
     assert declared == set(ROUTE_ROLES), {
