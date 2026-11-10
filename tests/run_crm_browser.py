@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory(prefix='beershop-browser-') as folder, socket.s
     env.pop('BEERSHOP_PERSISTENT_DATABASE_URL', None)
     env.update(DATABASE_URL='sqlite:///' + str(Path(folder) / 'test.db'),
                BEERSHOP_ADMIN_TOKEN='t' * 40, CRM_TEST_TOKEN='t' * 40,
+               BEERSHOP_V9_AUDIT_TOKEN='a' * 40,
                KEYCRM_SYNC_ENABLED='0', PRIVATBANK_READ_ENABLED='0',
                PYTHONPATH=str(root), CRM_TEST_URL=f'http://127.0.0.1:{port}')
     for key in ('KEYCRM_API_KEY', 'NOVA_POSHTA_API_KEY', 'PRIVATBANK_TOKEN'):
