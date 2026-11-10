@@ -27,6 +27,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker,
 ROOT = Path(__file__).resolve().parents[1]
 from .storage import sqlalchemy_url, migrate_once
 from .fx import fetch_nbu, convert_price
+from .pricing import calculate_sell_rate
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -110,6 +111,30 @@ class FxState(Base):
     baseline_rate: Mapped[Decimal] = mapped_column(Numeric(12, 6))
     effective_date: Mapped[str] = mapped_column(String(10))
     checked_at: Mapped[str] = mapped_column(String(40))
+
+
+class PricingPolicy(Base):
+    __tablename__ = 'pricing_policies'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    bank_card_rate: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    cash_usd_buy_rate: Mapped[Decimal] = mapped_column(Numeric(12, 6))
+    single_tax_percent: Mapped[Decimal] = mapped_column(Numeric(6, 3))
+    military_percent: Mapped[Decimal] = mapped_column(Numeric(6, 3))
+    withdrawal_percent: Mapped[Decimal] = mapped_column(Numeric(6, 3))
+    profit_percent: Mapped[Decimal] = mapped_column(Numeric(6, 3))
+    checked_at: Mapped[str] = mapped_column(String(40))
+
+
+class PricingPolicyIn(BaseModel):
+    enabled: bool = False
+    bank_card_rate: Decimal = Field(gt=10, lt=1000, max_digits=12, decimal_places=6)
+    cash_usd_buy_rate: Decimal = Field(gt=10, lt=1000, max_digits=12, decimal_places=6)
+    single_tax_percent: Decimal = Field(default=Decimal('5'), ge=0, le=25, max_digits=6, decimal_places=3)
+    military_percent: Decimal = Field(default=Decimal('1'), ge=0, le=25, max_digits=6, decimal_places=3)
+    withdrawal_percent: Decimal = Field(default=Decimal('1'), ge=0, le=25, max_digits=6, decimal_places=3)
+    profit_percent: Decimal = Field(default=Decimal('0'), ge=0, le=100, max_digits=6, decimal_places=3)
+    confirm_rates: bool = False
 
 
 class CategoryIn(BaseModel):
@@ -243,17 +268,113 @@ def _fx_payload(state, cached=False, delayed=False):
             'effective_date': state.effective_date, 'checked_at': state.checked_at,
             'cached': cached, 'delayed': delayed}
 
+def pricing_context():
+    """Live manual policy overrides NBU only after explicit administrator activation.
+
+    These are *manual* bank/exchange rates, not an automatic PrivatBank feed.
+    Never continue checkout with stale operator-entered rates.
+    """
+    with SessionLocal() as db:
+        policy = db.get(PricingPolicy, 1)
+        if policy is not None and policy.enabled:
+            now = datetime.now(timezone.utc)
+            try:
+                checked = datetime.fromisoformat(policy.checked_at)
+                if checked.tzinfo is None:
+                    checked = checked.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(503, 'Час перевірки валютного курсу некоректний.') from exc
+            age = now - checked
+            if not timedelta(0) <= age <= timedelta(hours=24):
+                raise HTTPException(503, 'Введені вручну курси застаріли. Адміністратор має перевірити та оновити їх.')
+            pricing = calculate_sell_rate(
+                policy.bank_card_rate, policy.cash_usd_buy_rate, policy.single_tax_percent,
+                policy.military_percent, policy.withdrawal_percent, policy.profit_percent)
+            rate = pricing['site_rate']
+            # UAH-denominated catalog entries are already retail prices and do NOT
+            # receive an extra surcharge. USD entries use the calculated sale rate.
+            return {'rate': rate, 'baseline_rate': rate,
+                    'effective_date': checked.date().isoformat(),
+                    'checked_at': policy.checked_at, 'source': 'manual-pricing-policy',
+                    'cached': False, 'delayed': False}
+    return fx_context()
+
+
+def _pricing_output(pricing):
+    return {key: str(value) for key, value in pricing.items()}
+
+
+@app.get('/api/admin/pricing/policy', dependencies=[Depends(auth)])
+def pricing_policy_get(db: Session = Depends(session)):
+    policy = db.get(PricingPolicy, 1)
+    if not policy:
+        return JSONResponse({
+            'enabled': False, 'bank_card_rate': '', 'cash_usd_buy_rate': '',
+            'single_tax_percent': '5', 'military_percent': '1',
+            'withdrawal_percent': '1', 'profit_percent': '0', 'checked_at': None,
+            'source': 'manual only; automatic PrivatBank rates are not connected'},
+            headers={'Cache-Control': 'private, no-store'})
+    return JSONResponse({
+        'enabled': policy.enabled, 'bank_card_rate': str(policy.bank_card_rate),
+        'cash_usd_buy_rate': str(policy.cash_usd_buy_rate),
+        'single_tax_percent': str(policy.single_tax_percent),
+        'military_percent': str(policy.military_percent),
+        'withdrawal_percent': str(policy.withdrawal_percent),
+        'profit_percent': str(policy.profit_percent),
+        'checked_at': policy.checked_at, 'source': 'manual operator input'},
+        headers={'Cache-Control': 'private, no-store'})
+
+
+@app.post('/api/admin/pricing/preview', dependencies=[Depends(auth)])
+def pricing_policy_preview(data: PricingPolicyIn):
+    try:
+        result = calculate_sell_rate(data.bank_card_rate, data.cash_usd_buy_rate,
+            data.single_tax_percent, data.military_percent,
+            data.withdrawal_percent, data.profit_percent)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return JSONResponse(_pricing_output(result), headers={'Cache-Control': 'private, no-store'})
+
+
+@app.put('/api/admin/pricing/policy', dependencies=[Depends(auth)])
+def pricing_policy_put(data: PricingPolicyIn, db: Session = Depends(session)):
+    if data.enabled and not data.confirm_rates:
+        raise HTTPException(422, 'Для активації підтвердіть, що курси перевірені вручну.')
+    # Validate ALL inputs, even when saving a disabled policy.
+    try:
+        result = calculate_sell_rate(data.bank_card_rate, data.cash_usd_buy_rate,
+            data.single_tax_percent, data.military_percent,
+            data.withdrawal_percent, data.profit_percent)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    policy = db.get(PricingPolicy, 1)
+    if policy is None:
+        policy = PricingPolicy(id=1)
+        db.add(policy)
+    for field in ('enabled', 'bank_card_rate', 'cash_usd_buy_rate',
+                  'single_tax_percent', 'military_percent',
+                  'withdrawal_percent', 'profit_percent'):
+        setattr(policy, field, getattr(data, field))
+    policy.checked_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    return JSONResponse({
+        'enabled': policy.enabled, 'checked_at': policy.checked_at,
+        **_pricing_output(result)},
+        headers={'Cache-Control': 'private, no-store'})
+
+
 @app.get('/api/fx/usd-uah')
 def fx_public():
-    fx = fx_context()
+    fx = pricing_context()
     return {**fx, 'rate': str(fx['rate']), 'baseline_rate': str(fx['baseline_rate']),
-            'source': 'NBU', 'conversion': 'UAH / USD linked to USD-UAH rate'}
+            'source': fx.get('source', 'NBU'),
+            'conversion': 'UAH per USD; manual pricing includes configured taxes, fees and margin'}
 
 @app.post('/api/quote')
 def quote_prices(data: QuoteIn, db: Session = Depends(session)):
     if len({x.variant_id for x in data.items}) != len(data.items):
         raise HTTPException(422, 'Duplicate variant IDs')
-    fx = fx_context()
+    fx = pricing_context()
     ids = [x.variant_id for x in data.items]
     variants = {v.id: v for v in db.scalars(select(Variant).where(
         Variant.store_id == 1, Variant.id.in_(ids))).all()}
@@ -293,13 +414,13 @@ def products(q: str = Query('', max_length=100), category: str = Query('', max_l
         stmt = stmt.where(available_variants)
     count = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.scalars(stmt.order_by(Product.id.desc()).offset((page - 1) * limit).limit(limit)).all()
-    fx = fx_context()
+    fx = pricing_context()
     return {'items': [product_dict(db, p, fx=fx) for p in rows], 'total': count, 'page': page, 'limit': limit}
 @app.get('/api/products/{slug}')
 def product(slug: str, db: Session = Depends(session)):
     p = db.scalar(select(Product).where(Product.store_id == 1, Product.slug == slug, Product.active.is_(True)))
     if not p: raise HTTPException(404, 'Product not found')
-    return product_dict(db, p, fx=fx_context())
+    return product_dict(db, p, fx=pricing_context())
 @app.post('/api/admin/categories', status_code=201, dependencies=[Depends(auth)])
 def add_category(data: CategoryIn, db: Session = Depends(session)):
     if db.scalar(select(Category).where(Category.store_id == 1, Category.slug == data.slug)): raise HTTPException(409, 'Category slug exists')
@@ -333,7 +454,7 @@ def update_variant(variant_id: int, data: VariantUpdate, db: Session = Depends(s
     db.commit(); return variant_dict(v)
 @app.post('/api/orders', status_code=201)
 def checkout(data: CheckoutIn, db: Session = Depends(session)):
-    fx = fx_context()
+    fx = pricing_context()
     if len({x.variant_id for x in data.items}) != len(data.items): raise HTTPException(422, 'Duplicate variant IDs')
     try:
         if db.bind.dialect.name == 'sqlite': db.execute(text('BEGIN IMMEDIATE'))
@@ -822,6 +943,12 @@ def backup_js():
 def public_storefront_v5():
     return FileResponse(ROOT / 'web' / 'storefront-v5.js', media_type='application/javascript',
                         headers={'Cache-Control': 'no-cache'})
+
+@app.get('/assets/pricing-admin.js')
+def pricing_admin_js():
+    return FileResponse(ROOT / 'web' / 'pricing-admin.js', media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
 
 @app.get('/assets/store-fx.js')
 def store_fx_js():
