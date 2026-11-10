@@ -32,3 +32,72 @@ def test_invalid_stock():
     with TestClient(app) as c:
         assert c.post('/api/orders',json={'request_key':uuid4().hex,'name':'Test Customer','email':'test@example.com','phone':'123456789','delivery_address':'Kyiv office 1','items':[{'variant_id':99999999,'quantity':1}]}).status_code==404
 
+
+
+def test_storefront_v5_product_pages_and_stock_filter():
+    """Every product page resolves only active merchandise and stock filter is global."""
+    with TestClient(app) as client:
+        category = client.get('/api/categories').json()[0]
+        stem = 'v5-' + uuid4().hex[:12]
+        stocked = client.post('/api/admin/products', headers=auth, json={
+            'category_id': category['id'], 'slug': stem + '-stocked',
+            'name': 'Test beer tap available'
+        })
+        assert stocked.status_code == 201, stocked.text
+        missing = client.post('/api/admin/products', headers=auth, json={
+            'category_id': category['id'], 'slug': stem + '-out',
+            'name': 'Test beer tap unavailable'
+        })
+        assert missing.status_code == 201, missing.text
+        for product, qty in ((stocked, 2), (missing, 0)):
+            vid = client.post('/api/admin/products/' + str(product.json()['id']) + '/variants',
+                headers=auth, json={'sku': stem + '-' + str(qty), 'price': '1499.00', 'stock': qty})
+            assert vid.status_code == 201, vid.text
+        all_items = client.get('/api/products', params={'q': 'Test beer tap', 'in_stock': 'false'}).json()['items']
+        assert any(item['id'] == stocked.json()['id'] for item in all_items)
+        assert any(item['id'] == missing.json()['id'] for item in all_items)
+        available = client.get('/api/products', params={'q': 'Test beer tap', 'in_stock': 'true'})
+        assert available.status_code == 200, available.text
+        ids = [item['id'] for item in available.json()['items']]
+        assert stocked.json()['id'] in ids
+        assert missing.json()['id'] not in ids
+        page = client.get('/products/' + stem + '-stocked')
+        assert page.status_code == 200 and 'BeerShop' in page.text
+        assert '/assets/storefront-v5.js' in page.text
+        assert client.get('/products/' + stem + '-not-found').status_code == 404
+        asset = client.get('/assets/storefront-v5.js')
+        assert asset.status_code == 200 and 'javascript' in asset.headers['content-type']
+
+
+def test_replay_key_cannot_disclose_another_buyers_order():
+    with TestClient(app) as client:
+        category = client.get('/api/categories').json()[0]
+        slug = 'repeat-' + uuid4().hex[:12]
+        product = client.post('/api/admin/products', headers=auth, json={
+            'category_id': category['id'], 'slug': slug, 'name': 'Key isolation test'
+        }).json()
+        variant = client.post(f"/api/admin/products/{product['id']}/variants", headers=auth, json={
+            'sku': slug, 'price': '100.00', 'stock': 3
+        }).json()
+        payload = {
+            'request_key': uuid4().hex, 'name': 'Original Buyer',
+            'email': 'private@example.test', 'phone': '0501234567',
+            'delivery_address': 'Kyiv branch 1',
+            'items': [{'variant_id': variant['id'], 'quantity': 1}],
+            'expected_total': '100.00'
+        }
+        created = client.post('/api/orders', json=payload)
+        assert created.status_code == 201, created.text
+        assert client.post('/api/orders', json=payload).json()['id'] == created.json()['id']
+        for changed in (
+            {**payload, 'name': 'Impersonator'},
+            {**payload, 'phone': '0123456789'},
+            {**payload, 'items': [{'variant_id': variant['id'], 'quantity': 2}]},
+            {**payload, 'expected_total': '200.00'},
+        ):
+            response = client.post('/api/orders', json=changed)
+            assert response.status_code == 409, response.text
+            assert payload['email'] not in response.text
+            assert payload['phone'] not in response.text
+        item = client.get('/api/admin/inventory/' + str(variant['id']), headers=auth).json()
+        assert item['available'] == 2 and item['reserved'] == 1
