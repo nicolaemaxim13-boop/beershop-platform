@@ -90,6 +90,35 @@ const token = process.env.CRM_TEST_TOKEN || 't'.repeat(40);
       }
     }
 
+    // v7: sorted server-side across all results, with shareable URL and reload.
+    await page.locator('#sort').selectOption('price_asc');
+    await page.waitForFunction(name =>
+      document.querySelector('#cards .card h3')?.textContent.includes(name),
+      unavailable.product.name
+    );
+    assert.equal(new URL(page.url()).searchParams.get('sort'), 'price_asc');
+    assert.equal(new URL(page.url()).searchParams.get('q'), 'V5 Fixture');
+    await page.reload();
+    await page.locator('#cards .card').first().waitFor();
+    assert.equal(await page.locator('#sort').inputValue(), 'price_asc');
+    assert.equal(await page.locator('#search').inputValue(), 'V5 Fixture');
+    assert((await page.locator('#cards .card').first().textContent()).includes(unavailable.product.name));
+
+    await page.locator('#sort').selectOption('price_desc');
+    await page.waitForFunction(name =>
+      document.querySelector('#cards .card h3')?.textContent.includes(name),
+      available.product.name
+    );
+    await page.locator('#search').fill('V5-B-' + stamp);
+    await page.waitForFunction(name =>
+      document.querySelectorAll('#cards .card').length === 1 &&
+      document.querySelector('.card')?.textContent.includes(name),
+      unavailable.product.name
+    );
+    await page.locator('#search').fill('V5 Fixture');
+    await page.waitForFunction(() => document.querySelectorAll('#cards .card').length === 2);
+    await page.locator('#sort').selectOption('newest');
+
     await page.locator('#stock-only').check();
     await page.waitForFunction(name =>
       document.querySelectorAll('#cards .card').length === 1 &&
