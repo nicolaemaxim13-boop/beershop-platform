@@ -540,7 +540,17 @@ def invoice(order_id: int, db: Session = Depends(session)):
 def index(): return FileResponse(ROOT / 'web' / 'index.html')
 
 @app.get('/manage')
-def manage(): return FileResponse(ROOT / 'web' / 'manage.html')
+def manage():
+    # The admin HTML changes across deploys. Never cache an old control panel:
+    # a stale page can omit new controls or load obsolete JavaScript.
+    return FileResponse(ROOT / 'web' / 'manage.html', headers={
+        'Cache-Control': 'no-store, no-cache, max-age=0, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+        'X-BeerShop-Admin-Version': 'pricing-20261110',
+        'X-Content-Type-Options': 'nosniff',
+        'X-Robots-Tag': 'noindex, nofollow'
+    })
 
 @app.get('/products/{slug}')
 def storefront_product_page(slug: str, db: Session = Depends(session)):
