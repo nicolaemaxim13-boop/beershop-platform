@@ -300,19 +300,28 @@ def setup_staff_auth(app, Base, session, audit_provider):
         except (argon_errors.VerifyMismatchError, argon_errors.VerificationError,
                 argon_errors.InvalidHashError):
             correct_password = False
+        pending = db.get(StaffMfaRecovery, user.id)
+        # Once reset starts, OLD TOTP is immediately rejected, even on expiry.
+        recovery = pending is not None
         seed = None
-        if correct_password:
+        if correct_password and (not pending or pending.expires_at > now):
             try:
-                seed = crypto.decrypt(user.mfa_ciphertext.encode()).decode('ascii')
+                ciphertext = pending.mfa_ciphertext if pending else user.mfa_ciphertext
+                seed = crypto.decrypt(ciphertext.encode()).decode('ascii')
             except (InvalidToken, UnicodeDecodeError):
                 raise HTTPException(503, 'MFA encryption configuration invalid') from None
-        counter = matching_counter(seed, data.otp, after=user.last_totp_counter) if seed else None
+        after = -1 if recovery else user.last_totp_counter
+        counter = matching_counter(seed, data.otp, after=after) if seed else None
         if counter is None:
             record_failed_login(db, data.username, now, user=user)
             raise HTTPException(401, 'Invalid credentials or MFA')
         user.failed_attempts = 0
         user.locked_until = 0
         user.last_totp_counter = counter
+        if recovery:
+            user.mfa_ciphertext = pending.mfa_ciphertext
+            db.delete(pending)
+            audit(db, 'mfa_recovery_completed', user.username, now, actor_id=user.id)
         token = secrets.token_urlsafe(32)
         item = StaffSession(user_id=user.id,
                             token_hash=hashlib.sha256(token.encode()).hexdigest(),
@@ -436,6 +445,76 @@ def setup_staff_auth(app, Base, session, audit_provider):
         audit(db, 'staff_disabled', user.username, int(time.time()), actor_id=owner.id)
         db.commit()
         return {'disabled': True, 'sessions_revoked': len(sessions)}
+
+    @router.post('/users/{user_id}/mfa-recovery')
+    def begin_mfa_recovery(user_id: int, data: RecoverMfaIn,
+                           identity=Depends(require_roles('owner')),
+                           db: Session = Depends(session)):
+        """Owner-assisted reset: non-owner accounts, staging only."""
+        now = int(time.time())
+        owner, _ = identity
+        owner = owner_step_up(db, owner, data.owner_password, data.owner_otp, now)
+        target = db.scalar(select(StaffUser).where(
+            StaffUser.id == user_id).with_for_update())
+        if (not target or target.username != data.confirm_username
+                or not target.active or target.role == 'owner'
+                or target.id == owner.id):
+            db.rollback()  # Invalid target must not consume fresh owner OTP.
+            raise HTTPException(409, 'Recovery target unavailable')
+        seed = new_totp_seed()
+        existing = db.get(StaffMfaRecovery, target.id)
+        encrypted = encrypt_seed(seed)
+        if existing:
+            existing.mfa_ciphertext = encrypted
+            existing.issued_at = now
+            existing.expires_at = now + MFA_RECOVERY_SECONDS
+        else:
+            db.add(StaffMfaRecovery(user_id=target.id, mfa_ciphertext=encrypted,
+                                    issued_at=now,
+                                    expires_at=now + MFA_RECOVERY_SECONDS))
+        sessions = db.scalars(select(StaffSession).where(
+            StaffSession.user_id == target.id, StaffSession.revoked.is_(False))).all()
+        for item in sessions:
+            item.revoked = True
+        audit(db, 'mfa_recovery_started', target.username, now, actor_id=owner.id)
+        db.commit()
+        uri = (f'otpauth://totp/BeerShop-v9:{quote(target.username)}'
+               f'?secret={seed}&issuer=BeerShop-v9&digits=6&period=30')
+        # URI is shown exactly once; never write to server logs.
+        return {'username': target.username, 'mfa_enrollment_uri': uri,
+                'expires_in': MFA_RECOVERY_SECONDS, 'sessions_revoked': len(sessions)}
+
+    @router.get('/security-events/retention')
+    def audit_retention(identity=Depends(require_roles('owner')),
+                        db: Session = Depends(session)):
+        """Read-only retention preview. Never deletes automatically."""
+        from sqlalchemy import func
+        cutoff = int(time.time()) - AUDIT_RETENTION_DAYS * 86400
+        count = int(db.scalar(select(func.count()).select_from(
+            StaffSecurityEvent).where(StaffSecurityEvent.occurred_at < cutoff)) or 0)
+        return {'retention_days': AUDIT_RETENTION_DAYS,
+                'eligible_before': cutoff, 'eligible_count': count,
+                'auto_prune_enabled': False}
+
+    @router.post('/security-events/prune')
+    def prune_audit(data: PruneAuditIn,
+                    identity=Depends(require_roles('owner')),
+                    db: Session = Depends(session)):
+        now = int(time.time())
+        owner, _ = identity
+        owner = owner_step_up(db, owner, data.owner_password, data.owner_otp, now)
+        cutoff = now - AUDIT_RETENTION_DAYS * 86400
+        # Bound each explicit owner-authorized prune to a maximum of 500.
+        ids = db.scalars(select(StaffSecurityEvent.id).where(
+            StaffSecurityEvent.occurred_at < cutoff).order_by(
+            StaffSecurityEvent.id).limit(500)).all()
+        if ids:
+            db.execute(delete(StaffSecurityEvent).where(
+                StaffSecurityEvent.id.in_(ids)))
+        audit(db, 'security_retention_prune', owner.username, now, actor_id=owner.id)
+        db.commit()
+        return {'deleted_old_events': len(ids),
+                'retention_days': AUDIT_RETENTION_DAYS, 'batch_limit': 500}
 
     @router.get('/security-events')
     def security_events(limit: int = Query(default=50, ge=1, le=100),
