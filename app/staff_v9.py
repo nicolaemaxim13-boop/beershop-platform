@@ -35,6 +35,8 @@ MAX_FAILURES = 5
 LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_LIMIT_FAILURES = 8
 LOGIN_BLOCK_SECONDS = 15 * 60
+MFA_RECOVERY_SECONDS = 30 * 60
+AUDIT_RETENTION_DAYS = 90
 
 
 def is_enabled():
@@ -112,6 +114,18 @@ class CreateUserIn(BaseModel):
     role: str
 
 
+class RecoverMfaIn(BaseModel):
+    owner_password: str = Field(min_length=1, max_length=256)
+    owner_otp: str = Field(pattern=r'^\d{6}$')
+    confirm_username: str = Field(pattern=r'^[a-z][a-z0-9_.-]{2,31}$')
+
+
+class PruneAuditIn(BaseModel):
+    owner_password: str = Field(min_length=1, max_length=256)
+    owner_otp: str = Field(pattern=r'^\d{6}$')
+    confirmation: str = Field(pattern=r'^PRUNE_STAGING_EVENTS_OLDER_THAN_90_DAYS$')
+
+
 def setup_staff_auth(app, Base, session, audit_provider):
     class StaffUser(Base):
         __tablename__ = 'v9_staff_users'
@@ -149,6 +163,14 @@ def setup_staff_auth(app, Base, session, audit_provider):
         occurred_at: Mapped[int] = mapped_column(Integer, nullable=False)
         actor_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    class StaffMfaRecovery(Base):
+        __tablename__ = 'v9_staff_mfa_recovery'
+        user_id: Mapped[int] = mapped_column(
+            ForeignKey('v9_staff_users.id'), primary_key=True)
+        mfa_ciphertext: Mapped[str] = mapped_column(String(512), nullable=False)
+        expires_at: Mapped[int] = mapped_column(Integer, nullable=False)
+        issued_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
     def digest_subject(username):
         # No username, token, password, TOTP or IP is stored in these tables.
         secret = base64.urlsafe_b64decode(os.environ['BEERSHOP_V9_MFA_KEY'].encode())
@@ -159,6 +181,39 @@ def setup_staff_auth(app, Base, session, audit_provider):
         db.add(StaffSecurityEvent(
             event_type=event_type, subject_hash=digest_subject(username),
             occurred_at=now, actor_user_id=actor_id))
+
+    def owner_step_up(db, owner, password, otp, now):
+        """Require a fresh owner MFA code and password for security actions."""
+        locked_owner = db.scalar(select(StaffUser).where(
+            StaffUser.id == owner.id).with_for_update())
+        if (not locked_owner or not locked_owner.active
+                or locked_owner.role != 'owner'
+                or locked_owner.locked_until > now):
+            raise HTTPException(403, 'Owner reauthentication required')
+        try:
+            correct = PASSWORD_HASHER.verify(locked_owner.password_hash, password)
+        except (argon_errors.VerifyMismatchError, argon_errors.VerificationError,
+                argon_errors.InvalidHashError):
+            correct = False
+        if not correct:
+            audit(db, 'owner_step_up_denied', locked_owner.username, now,
+                  actor_id=locked_owner.id)
+            db.commit()
+            raise HTTPException(403, 'Owner reauthentication required')
+        try:
+            current_seed = require_staging().decrypt(
+                locked_owner.mfa_ciphertext.encode()).decode('ascii')
+        except (InvalidToken, UnicodeDecodeError):
+            raise HTTPException(503, 'Owner MFA encryption configuration invalid') from None
+        counter = matching_counter(current_seed, otp, now=now,
+                                   after=locked_owner.last_totp_counter)
+        if counter is None:
+            audit(db, 'owner_step_up_denied', locked_owner.username, now,
+                  actor_id=locked_owner.id)
+            db.commit()
+            raise HTTPException(403, 'Owner reauthentication required')
+        locked_owner.last_totp_counter = counter
+        return locked_owner
 
     def record_failed_login(db, username, now, user=None):
         """Atomic cross-process per-username throttling on SQLite/PostgreSQL."""
