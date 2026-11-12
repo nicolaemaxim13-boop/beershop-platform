@@ -250,3 +250,16 @@ def test_live_engine_cannot_be_relabelled_as_staging(strict_env):
         assert client.get('/api/admin/products', headers=owner).status_code == 503
         assert client.get('/api/admin/v9/readiness', headers=owner).status_code == 503
         assert client.get('/api/v91/features').json()['staff_crm_login'] is False
+
+
+def test_staging_startup_rejects_remote_before_database_bootstrap(strict_env, monkeypatch):
+    from fastapi import HTTPException
+    strict_env.setattr(main, 'DB_URL',
+        'postgresql://fake:fake@ep-example.aws.neon.tech/beershop')
+    def must_not_touch_database(*_args, **_kwargs):
+        raise AssertionError('Database migration/bootstrap must not be reached')
+    monkeypatch.setattr(main.Base.metadata, 'create_all', must_not_touch_database)
+    with pytest.raises(HTTPException) as exc:
+        with TestClient(main.app):
+            pass
+    assert exc.value.status_code == 503
