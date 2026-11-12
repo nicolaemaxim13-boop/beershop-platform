@@ -1,4 +1,6 @@
 """v9.1 only own BeerShop CRM in strict staging; no external CRM dispatch."""
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import app.main as main
 
@@ -22,11 +24,14 @@ def test_first_party_crm_feature_switch_and_asset(monkeypatch):
         assert 'https://openapi.keycrm.app' not in script.text
         assert 'localStorage' not in script.text
     monkeypatch.setenv('BEERSHOP_V91_ENFORCE_RBAC', '1')
-    with TestClient(main.app) as c:
-        strict = c.get('/api/v91/features')
-        assert strict.status_code == 200
-        assert strict.json()['own_crm_only'] is True
-        assert strict.json()['staff_crm_login'] is False
+    monkeypatch.delenv('BEERSHOP_V9_STAFF_AUTH', raising=False)
+    monkeypatch.delenv('BEERSHOP_V91_STAGING_ACK', raising=False)
+    # Strict RBAC without MFA and isolated-staging ACK is not merely a
+    # disabled UI mode: the app refuses startup before it can touch the DB.
+    with pytest.raises(HTTPException) as blocked:
+        with TestClient(main.app):
+            pass
+    assert blocked.value.status_code == 503
     monkeypatch.setenv('BEERSHOP_V9_STAFF_AUTH', '1')
     monkeypatch.setenv('BEERSHOP_V91_STAGING_ACK', 'ISOLATED_STAGING_ONLY')
     monkeypatch.setattr(main, 'PERSISTENT_URL', '')
