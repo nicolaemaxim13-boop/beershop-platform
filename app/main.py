@@ -1209,8 +1209,15 @@ def staff_v9_styles():
 def v91_features():
     # Public non-secret feature signal so the legacy admin UI can hide
     # obsolete external CRM panels in strict isolated staging only.
+    staff_crm_login = (
+        strict_rbac_enabled()
+        and staff_v9_enabled()
+        and os.getenv('BEERSHOP_V91_STAGING_ACK') == 'ISOLATED_STAGING_ONLY'
+        and not PERSISTENT_URL
+    )
     return {'own_crm_only': strict_rbac_enabled(),
-            'crm_name': 'BeerShop CRM'}
+            'crm_name': 'BeerShop CRM',
+            'staff_crm_login': staff_crm_login}
 
 
 @app.get('/assets/own-crm-v91.js')
