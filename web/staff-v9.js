@@ -11,6 +11,7 @@
   function reset(){
     token=null;role=null;username=null;
     clearEnrollment();$('session-panel').hidden=true;$('login-panel').hidden=false;
+    $('staff-crm-access').hidden=true;
     $('staff-password').value='';$('staff-otp').value='';
     $('new-staff-password').value='';out.textContent='';
   }
@@ -39,10 +40,24 @@
       $('login-panel').hidden=true;$('session-panel').hidden=false;
       $('staff-profile').textContent=username+' · '+role+' · сесія до 15 хв';
       $('owner-panel').hidden=role!=='owner';
+      $('staff-crm-access').hidden=!['owner','operations'].includes(role);
       status.textContent='Вхід успішний. Доступ діє лише для дозволених тестових API.';
       out.textContent='';
     }catch(error){reset();status.textContent='Вхід відхилено: '+error.message;}
     finally{body.password='';body.otp='';$('staff-password').value='';$('staff-otp').value='';}
+  });
+  $('staff-revoke-all').addEventListener('click',async()=>{
+    let confirmed=false;
+    if(token){
+      try{
+        await call('sessions/revoke-all',{method:'POST'});
+        confirmed=true;
+      }catch(_){/* keep uncertain server state explicit */}
+    }
+    reset();
+    status.textContent=confirmed
+      ? 'Всі ваші активні сесії відкликано сервером.'
+      : 'Локальну сесію закрито. Серверне відкликання не підтверджено.';
   });
   $('staff-logout').addEventListener('click',async()=>{
     if(token){try{await call('logout',{method:'POST'});}catch(_){/* revoke may fail if expired */}}
