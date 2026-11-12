@@ -238,6 +238,13 @@ class StatusIn(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app):
+    # Block all staging identity/RBAC configurations BEFORE any schema creation,
+    # migration or CRM/inventory backfill can touch a production database.
+    if staff_v9_enabled() or strict_rbac_enabled():
+        from .rbac_v91 import verify_staging_database
+        verify_staging_database(persistent_url=PERSISTENT_URL, database_url=DB_URL)
+        if strict_rbac_enabled():
+            require_isolated_staging(persistent_url=PERSISTENT_URL, database_url=DB_URL)
     if PERSISTENT_URL:
         migrate_once(Base.metadata, LEGACY_URL, engine)
     Base.metadata.create_all(engine)  # Demo bootstrap; replace with Alembic migrations in production.
