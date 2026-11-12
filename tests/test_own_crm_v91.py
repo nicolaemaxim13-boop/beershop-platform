@@ -8,7 +8,7 @@ def test_first_party_crm_feature_switch_and_asset(monkeypatch):
     with TestClient(main.app) as c:
         normal = c.get('/api/v91/features')
         assert normal.status_code == 200
-        assert normal.json() == {'own_crm_only': False, 'crm_name': 'BeerShop CRM'}
+        assert normal.json() == {'own_crm_only': False, 'crm_name': 'BeerShop CRM', 'staff_crm_login': False}
         page = c.get('/manage')
         assert page.status_code == 200
         for elem in ('opsOwnCrmV91', 'conn41OwnCrmV91',
@@ -26,6 +26,12 @@ def test_first_party_crm_feature_switch_and_asset(monkeypatch):
         strict = c.get('/api/v91/features')
         assert strict.status_code == 200
         assert strict.json()['own_crm_only'] is True
+        assert strict.json()['staff_crm_login'] is False
+    monkeypatch.setenv('BEERSHOP_V9_STAFF_AUTH', '1')
+    monkeypatch.setenv('BEERSHOP_V91_STAGING_ACK', 'ISOLATED_STAGING_ONLY')
+    monkeypatch.setattr(main, 'PERSISTENT_URL', '')
+    with TestClient(main.app) as c:
+        assert c.get('/api/v91/features').json()['staff_crm_login'] is True
 
 
 def test_disabled_keycrm_routes_covered_by_role_enforcement():
