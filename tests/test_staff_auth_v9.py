@@ -173,6 +173,11 @@ def test_staff_ui_disabled_by_default_and_secure_when_enabled(staff_env):
         assert 'Персональний вхід співробітника' in page.text
         assert 'id="staff-revoke-all"' in page.text
         assert 'id="staff-crm-access"' in page.text
+        assert 'id="staff-recover"' in page.text
+        assert 'id="recover-password"' in page.text
+        assert 'id="recover-otp"' in page.text
+        assert 'id="staff-retention"' in page.text
+        assert 'id="staff-events"' in page.text
         assert '<option value="finance">' in page.text
         assert page.headers['cache-control'] == 'private, no-store'
         assert page.headers['x-frame-options'] == 'DENY'
@@ -187,6 +192,10 @@ def test_staff_ui_disabled_by_default_and_secure_when_enabled(staff_env):
         ui = c.get('/assets/staff-v9.js').text
         assert 'localStorage.setItem' not in ui
         assert 'sessionStorage.setItem' not in ui
+        assert "body.owner_password=''" in ui
+        assert "body.owner_otp=''" in ui
+        assert "needs_new_mfa_setup:true" in ui
+        assert "mfa-recovery" in ui
 
 
 def test_v92_unknown_login_quota_is_db_backed_and_audit_is_private(staff_env):
