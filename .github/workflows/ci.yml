@@ -75,6 +75,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://beershop:test-fixture-only@localhost:5432/beershop_test
+      BEERSHOP_V91_ALLOW_LOCAL_POSTGRES: '1' # Isolated CI PostgreSQL only
       BEERSHOP_ADMIN_TOKEN: tttttttttttttttttttttttttttttttttttttttt
     steps:
       - uses: actions/checkout@v4
