@@ -265,7 +265,7 @@ def auth(request: Request,
         return authorize_legacy_admin_request(
             request=request, authorization=authorization, db=db,
             user_model=StaffUserV9, session_model=StaffSessionV9,
-            persistent_url=PERSISTENT_URL)
+            persistent_url=PERSISTENT_URL, database_url=DB_URL)
     token = os.getenv('BEERSHOP_ADMIN_TOKEN', '')
     if len(token) < 32: raise HTTPException(503, 'Admin token not configured')
     if os.getenv('BEERSHOP_V9_AUDIT_TOKEN', '') == token:
@@ -278,7 +278,7 @@ def auth_readiness(authorization: Annotated[str | None, Header()] = None,
                    db: Session = Depends(session)):
     """Read-only audit; in strict staging only MFA owner/auditor sessions work."""
     if strict_rbac_enabled():
-        require_isolated_staging(persistent_url=PERSISTENT_URL)
+        require_isolated_staging(persistent_url=PERSISTENT_URL, database_url=DB_URL)
         user, _ = verify_bearer_staff(authorization, db, StaffUserV9, StaffSessionV9)
         if user.role not in ('owner', 'auditor'):
             raise HTTPException(403, 'Insufficient role')
@@ -1205,6 +1205,15 @@ def staff_v9_styles():
                         headers={'Cache-Control':'no-store'})
 
 
+def _staging_db_safe():
+    from .rbac_v91 import verify_staging_database
+    try:
+        verify_staging_database(persistent_url=PERSISTENT_URL, database_url=DB_URL)
+        return True
+    except HTTPException:
+        return False
+
+
 @app.get('/api/v91/features')
 def v91_features():
     # Public non-secret feature signal so the legacy admin UI can hide
@@ -1214,6 +1223,7 @@ def v91_features():
         and staff_v9_enabled()
         and os.getenv('BEERSHOP_V91_STAGING_ACK') == 'ISOLATED_STAGING_ONLY'
         and not PERSISTENT_URL
+        and _staging_db_safe()
     )
     return {'own_crm_only': strict_rbac_enabled(),
             'crm_name': 'BeerShop CRM',
