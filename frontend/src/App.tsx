@@ -10,6 +10,8 @@ import {
   Store,
 } from "lucide-react";
 import { ApiClient, errorMessage } from "./api";
+import { crmStaffLoginEnabled, signInCrmStaff, StaffLoginError } from "./staffAuth";
+import type { StaffCrmRole } from "./staffAuth";
 import { Details } from "./Details";
 import { Editor } from "./Editor";
 import { createLabels, List, titles } from "./Lists";
@@ -45,10 +47,12 @@ function Header({
   view,
   select,
   logout,
+  staffRole,
 }: {
   view?: View;
   select?: (view: View) => void;
   logout?: () => void;
+  staffRole?: StaffCrmRole;
 }) {
   return (
     <header className="topbar">
@@ -72,7 +76,7 @@ function Header({
         </nav>
       )}
       <div className="top-actions">
-        <a href="/manage">Адмінпанель</a>
+        {staffRole ? <a href="/staff-v9">Персональна безпека</a> : <a href="/manage">Адмінпанель</a>}
         {logout && (
           <button
             id="logout"
@@ -89,7 +93,11 @@ function Header({
   );
 }
 
-function Workspace({ api, logout }: { api: ApiClient; logout: () => void }) {
+function Workspace({ api, logout, staff }: {
+  api: ApiClient;
+  logout: () => void;
+  staff: { username: string; role: StaffCrmRole } | null;
+}) {
   const [view, setView] = useState<View>("orders"),
     [page, setPage] = useState(1);
   const [query, setQuery] = useState(""),
@@ -103,6 +111,11 @@ function Workspace({ api, logout }: { api: ApiClient; logout: () => void }) {
     [refreshing, setRefreshing] = useState(false);
   const editorSequence = useRef(0);
   const edit = (next: EditorTarget) => {
+    // UI affordance only. The server is the source of truth for permissions.
+    if (staff?.role === "operations" && (next.kind === "stock" || next.kind === "bank")) {
+      setNotice("Ця операція доступна лише відповідальній ролі.");
+      return;
+    }
     editorSequence.current++;
     setEditor(next);
     setNotice("");
@@ -212,12 +225,12 @@ function Workspace({ api, logout }: { api: ApiClient; logout: () => void }) {
   return (
     <>
       <a className="skip-link" href="#list">До списку результатів</a>
-      <Header view={view} select={select} logout={logout} />
+      <Header view={view} select={select} logout={logout} staffRole={staff?.role} />
       <main>
         <div id="workspace">
           <section className="page-head">
             <div>
-              <p className="eyebrow">BEERSHOP / CRM 1.2</p>
+              <p className="eyebrow">BEERSHOP / CRM 1.2 {staff ? " · MFA STAGING · " + staff.username + " · " + staff.role : ""}</p>
               <h1 id="page-title">{titles[view]}</h1>
             </div>
             <div className="actions">
@@ -423,6 +436,7 @@ function Workspace({ api, logout }: { api: ApiClient; logout: () => void }) {
           open={setTarget}
           edit={edit}
           changed={changed}
+          staffRole={staff?.role}
           onClose={() => {
             setTarget(null);
             setNotice("");
