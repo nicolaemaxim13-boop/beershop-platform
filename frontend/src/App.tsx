@@ -468,76 +468,146 @@ function Workspace({ api, logout, staff }: {
 }
 
 export default function App() {
-  const [api, setApi] = useState<ApiClient | null>(null),
-    [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+  const [api, setApi] = useState<ApiClient | null>(null);
+  const [token, setToken] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [otp, setOtp] = useState("");
+  const [staff, setStaff] = useState<{ username: string; role: StaffCrmRole } | null>(null);
+  const [mode, setMode] = useState<"checking" | "legacy" | "staff" | "error">("checking");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const session = useRef<ApiClient | null>(null);
-  const logout = useCallback(() => {
-    session.current?.dispose();
-    session.current = null;
-    setApi(null);
-    setToken("");
+  const staffSession = useRef(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    crmStaffLoginEnabled(controller.signal)
+      .then((enabled) => {
+        if (!controller.signal.aborted) setMode(enabled ? "staff" : "legacy");
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setMode("error");
+      });
+    return () => controller.abort();
   }, []);
+
+  const logout = useCallback(() => {
+    const current = session.current;
+    // Drop memory credentials first; server revocation is best effort.
+    if (staffSession.current && current)
+      void current.revokeStaffSession().catch(() => {});
+    else current?.dispose();
+    session.current = null;
+    staffSession.current = false;
+    setApi(null);
+    setStaff(null);
+    setToken("");
+    setPassword("");
+    setOtp("");
+  }, []);
+
   useEffect(() => () => session.current?.dispose(), []);
-  if (api) return <Workspace api={api} logout={logout} />;
+
+  if (api) return <Workspace api={api} logout={logout} staff={staff} />;
+
   return (
     <>
       <Header />
       <main>
         <section id="login" className="login">
-          <p className="eyebrow">BEERSHOP CRM</p>
-          <h1>Вхід адміністратора</h1>
-          <form
-            id="login-form"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (busy) return;
-              setBusy(true);
-              setError("");
-              session.current?.dispose();
-              const next = new ApiClient(token.trim(), () => {
-                logout();
-                setError("Сесію завершено. Увійдіть повторно.");
-              });
-              session.current = next;
-              try {
-                await next.crm("/index-orders", "POST", {});
-                if (next.active) {
-                  setToken("");
-                  setApi(next);
-                }
-              } catch (e) {
-                if (next.active) {
-                  next.dispose();
-                  setToken("");
-                  setError(errorMessage(e));
-                }
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <label htmlFor="admin-token">Токен адміністратора</label>
-            <input
-              id="admin-token"
-              type="password"
+          <p className="eyebrow">BEERSHOP CRM {mode === "staff" ? " · MFA STAGING" : ""}</p>
+          <h1>{mode === "staff" ? "Персональний вхід у CRM" : "Вхід адміністратора"}</h1>
+          {mode === "checking" && <p role="status">Перевірка режиму входу…</p>}
+          {mode === "error" && (
+            <div role="alert" className="inline-error">
+              Не вдалося перевірити спосіб входу. Дані не надсилаються.
+              <button type="button" onClick={() => window.location.reload()}>Спробувати знову</button>
+            </div>
+          )}
+          {(mode === "legacy" || mode === "staff") && (
+            <form
+              id="login-form"
               autoComplete="off"
-              required
-              minLength={32}
-              value={token}
-              disabled={busy}
-              onChange={(e) => setToken(e.target.value)}
-            />
-            <button className="primary" type="submit" disabled={busy}>
-              {busy ? "Вхід..." : "Увійти"}
-            </button>
-            {error && (
-              <p className="inline-error" role="alert">
-                {error}
-              </p>
-            )}
-          </form>
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (busy) return;
+                setBusy(true);
+                setError("");
+                session.current?.dispose();
+                session.current = null;
+                staffSession.current = false;
+                let next: ApiClient | null = null;
+                try {
+                  if (mode === "staff") {
+                    const signed = await signInCrmStaff(username.trim(), password, otp.trim());
+                    next = new ApiClient(signed.accessToken, () => {
+                      logout();
+                      setError("Сесію завершено. Увійдіть повторно.");
+                    });
+                    session.current = next;
+                    staffSession.current = true;
+                    // MFA sign-in must not mutate any order or customer record.
+                    await next.crm("/summary");
+                    if (next.active) {
+                      setStaff({ username: signed.username, role: signed.role });
+                      setApi(next);
+                    }
+                  } else {
+                    next = new ApiClient(token.trim(), () => {
+                      logout();
+                      setError("Сесію завершено. Увійдіть повторно.");
+                    });
+                    session.current = next;
+                    await next.crm("/index-orders", "POST", {});
+                    if (next.active) setApi(next);
+                  }
+                } catch (e) {
+                  if (next?.active && mode === "staff")
+                    void next.revokeStaffSession().catch(() => {});
+                  else next?.dispose();
+                  session.current = null;
+                  staffSession.current = false;
+                  setStaff(null);
+                  setError(e instanceof StaffLoginError ? e.message : errorMessage(e));
+                } finally {
+                  setBusy(false);
+                  setToken("");
+                  setPassword("");
+                  setOtp("");
+                }
+              }}
+            >
+              {mode === "staff" ? (
+                <>
+                  <p className="staff-login-note">Тільки для тестового середовища. Потрібні особистий пароль і код MFA. Ролі: власник або операції.</p>
+                  <label htmlFor="staff-username">Особистий логін</label>
+                  <input id="staff-username" type="text" required autoComplete="username"
+                    pattern="[a-z][a-z0-9_.-]{2,31}" maxLength={32} value={username}
+                    disabled={busy} onChange={(e) => setUsername(e.target.value)} />
+                  <label htmlFor="staff-password">Пароль</label>
+                  <input id="staff-password" type="password" required autoComplete="off"
+                    value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} />
+                  <label htmlFor="staff-otp">Шестизначний код MFA</label>
+                  <input id="staff-otp" type="text" inputMode="numeric" required
+                    pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code"
+                    value={otp} disabled={busy} onChange={(e) => setOtp(e.target.value)} />
+                  <a href="/staff-v9">Панель безпеки співробітника</a>
+                </>
+              ) : (
+                <>
+                  <label htmlFor="admin-token">Токен адміністратора</label>
+                  <input id="admin-token" type="password" autoComplete="off" required
+                    minLength={32} value={token} disabled={busy}
+                    onChange={(e) => setToken(e.target.value)} />
+                </>
+              )}
+              <button className="primary" type="submit" disabled={busy}>
+                {busy ? "Вхід..." : mode === "staff" ? "Увійти з MFA" : "Увійти"}
+              </button>
+              {error && <p className="inline-error" role="alert">{error}</p>}
+            </form>
+          )}
         </section>
         <section id="list" hidden />
       </main>
