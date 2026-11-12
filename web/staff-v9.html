@@ -28,8 +28,10 @@
 <div class="toolbar">
   <div><h2>Сесія співробітника</h2><p id="staff-profile" class="muted"></p></div>
   <button id="staff-logout" class="secondary" type="button">Вийти</button>
+  <button id="staff-revoke-all" class="secondary" type="button">Відкликати всі мої сесії</button>
 </div>
-<p class="muted">Токен діє максимум 15 хвилин і зберігається лише в пам'яті вкладки. Роль не дозволяє обійти основну авторизацію BeerShop Control.</p>
+<p class="muted">Токен діє максимум 15 хвилин і зберігається лише в пам'яті вкладки. Відкликання всіх сесій відключає їх на сервері. Роль не дозволяє обійти обмеження BeerShop.</p>
+<p id="staff-crm-access" hidden><a href="/crm/">Відкрити власну BeerShop CRM</a> — потрібен повторний особистий вхід із новим кодом MFA.</p>
 <div class="toolbar">
 <button type="button" id="staff-readiness">Аудит готовності</button>
 <button type="button" id="staff-catalog">Підсумок каталогу</button>
@@ -42,7 +44,7 @@
 <label for="new-staff-name">Новий логін<input id="new-staff-name" pattern="[a-z][a-z0-9_.-]{2,31}" maxlength="32" required></label>
 <label for="new-staff-password">Початковий пароль (14+ символів)<input id="new-staff-password" type="password" minlength="14" maxlength="128" autocomplete="off" required></label>
 <label for="new-staff-role">Роль
-<select id="new-staff-role"><option value="auditor">Аудитор (лише аудит)</option><option value="catalog">Каталог (лише підсумок)</option><option value="operations">Операції (лише кількості)</option><option value="owner">Власник</option></select>
+<select id="new-staff-role"><option value="auditor">Аудитор (лише аудит)</option><option value="catalog">Каталог (лише підсумок)</option><option value="operations">Операції (CRM і замовлення в staging)</option><option value="finance">Фінанси</option><option value="owner">Власник</option></select>
 </label>
 <button type="submit">Створити тестовий обліковий запис</button>
 </form>
