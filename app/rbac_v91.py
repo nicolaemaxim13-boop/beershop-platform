@@ -6,6 +6,8 @@ strict mode is enabled. This is an opt-in migration pilot, NOT production ready.
 """
 import os
 from fastapi import HTTPException
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 OWNER = frozenset({'owner'})
 CATALOG = frozenset({'owner', 'catalog'})
@@ -115,12 +117,33 @@ def strict_rbac_enabled():
     return os.getenv('BEERSHOP_V91_ENFORCE_RBAC') == '1'
 
 
-def require_isolated_staging(*, persistent_url=''):
-    # Any incomplete configuration is a service error, never a legacy bypass.
+def verify_staging_database(*, persistent_url, database_url):
+    """Reject remote databases even when someone enables a staging flag.
+
+    This does NOT prove local SQLite/loopback PostgreSQL is synthetic.
+    """
+    if persistent_url or not database_url:
+        raise HTTPException(503, 'Staff pilot forbidden on persistent or unknown database')
+    try:
+        url = make_url(database_url)
+        backend = url.get_backend_name()
+    except (ArgumentError, TypeError, ValueError):
+        raise HTTPException(503, 'Staff pilot database URL invalid') from None
+    if backend == 'sqlite' and not url.host:
+        return
+    if (backend == 'postgresql'
+            and url.host in ('localhost', '127.0.0.1', '::1')
+            and os.getenv('BEERSHOP_V91_ALLOW_LOCAL_POSTGRES') == '1'):
+        return
+    raise HTTPException(503, 'Staff pilot requires isolated local database')
+
+
+def require_isolated_staging(*, persistent_url='', database_url=None):
+    # An ACK alone must never authorize access to a remote production DB.
     if (os.getenv('BEERSHOP_V91_STAGING_ACK') != 'ISOLATED_STAGING_ONLY'
-            or os.getenv('BEERSHOP_V9_STAFF_AUTH') != '1'
-            or persistent_url):
+            or os.getenv('BEERSHOP_V9_STAFF_AUTH') != '1'):
         raise HTTPException(503, 'v9.1 RBAC requires an isolated staging environment')
+    verify_staging_database(persistent_url=persistent_url, database_url=database_url)
 
 
 def allowed_roles_for(method, route_path):
@@ -128,9 +151,9 @@ def allowed_roles_for(method, route_path):
 
 
 def authorize_legacy_admin_request(*, request, authorization, db, user_model,
-                                   session_model, persistent_url=''):
+                                   session_model, persistent_url='', database_url=None):
     """Use the existing MFA-backed session identity; reject unmapped routes."""
-    require_isolated_staging(persistent_url=persistent_url)
+    require_isolated_staging(persistent_url=persistent_url, database_url=database_url)
     from .staff_v9 import verify_bearer_staff
     user, item = verify_bearer_staff(authorization, db, user_model, session_model)
     route = request.scope.get('route')
