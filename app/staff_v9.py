@@ -40,6 +40,11 @@ def is_enabled():
 def require_staging():
     if not is_enabled():
         raise HTTPException(503, 'Staff identity pilot disabled')
+    # Check initialized engine settings, not a user-controlled request header.
+    # Prevent accidental MFA activation against live Neon/PostgreSQL.
+    from . import main
+    from .rbac_v91 import verify_staging_database
+    verify_staging_database(persistent_url=main.PERSISTENT_URL, database_url=main.DB_URL)
     key = os.getenv('BEERSHOP_V9_MFA_KEY', '')
     try:
         # Fernet requires a random 32-byte key, base64url-encoded. Do not
