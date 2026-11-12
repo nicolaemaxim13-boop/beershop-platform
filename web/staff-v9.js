@@ -83,6 +83,46 @@
     }catch(err){status.textContent='Помилка створення: '+err.message;}
     finally{body.password='';$('new-staff-password').value='';}
   });
+  $('staff-recover').addEventListener('submit',async e=>{
+    e.preventDefault();
+    clearEnrollment();
+    if(role!=='owner'){status.textContent='Доступ лише власнику';return;}
+    const id=Number($('recover-id').value);
+    if(!Number.isSafeInteger(id)||id<1){
+      status.textContent='Невірний ID співробітника';return;
+    }
+    const body={
+      confirm_username:$('recover-name').value.trim(),
+      owner_password:$('recover-password').value,
+      owner_otp:$('recover-otp').value.trim()
+    };
+    try{
+      // Issuing recovery revokes staff sessions and permanently blocks old MFA.
+      if(!window.confirm('Старий MFA працівника буде заблоковано, а всі його сесії відкликано. Продовжити?')){
+        status.textContent='Відновлення скасовано';return;
+      }
+      const result=await call('users/'+id+'/mfa-recovery',{method:'POST',body});
+      $('staff-enrollment-uri').value=result.mfa_enrollment_uri;
+      $('mfa-enrollment').hidden=false;
+      show({username:result.username,expires_in:result.expires_in,
+        sessions_revoked:result.sessions_revoked,needs_new_mfa_setup:true});
+      status.textContent='Новий секрет виданий один раз. Передайте його лише через захищений канал.';
+    }catch(error){out.textContent='';status.textContent='Відновлення відхилено: '+error.message;}
+    finally{
+      body.owner_password='';body.owner_otp='';
+      $('recover-password').value='';$('recover-otp').value='';
+    }
+  });
+  $('staff-events').addEventListener('click',async()=>{
+    if(role!=='owner')return;
+    try{show(await call('security-events?limit=50'));status.textContent='Журнал безпекових подій завантажено';}
+    catch(error){out.textContent='';status.textContent='Помилка журналу: '+error.message;}
+  });
+  $('staff-retention').addEventListener('click',async()=>{
+    if(role!=='owner')return;
+    try{show(await call('security-events/retention'));status.textContent='Перевірка retention (без видалення)';}
+    catch(error){out.textContent='';status.textContent='Помилка перевірки: '+error.message;}
+  });
   $('staff-clear-enrollment').addEventListener('click',clearEnrollment);
   status.textContent='Увійдіть із персональним MFA. Якщо модуль вимкнено, API поверне 503.';
 })();
