@@ -48,8 +48,23 @@
 </label>
 <button type="submit">Створити тестовий обліковий запис</button>
 </form>
+<h3>Відновлення MFA працівника · staging</h3>
+<p>Лише власник. Відновлення блокує старі коди MFA і відкликає всі сесії працівника. Не можна відновити MFA власника через цей інтерфейс. Потрібні пароль власника та <strong>новий</strong> код TOTP.</p>
+<form id="staff-recover" autocomplete="off">
+<label for="recover-id">ID співробітника<input id="recover-id" type="number" min="1" step="1" required></label>
+<label for="recover-name">Підтвердьте точний логін<input id="recover-name" pattern="[a-z][a-z0-9_.-]{2,31}" maxlength="32" autocomplete="off" required></label>
+<label for="recover-password">Пароль власника<input id="recover-password" type="password" maxlength="256" autocomplete="off" required></label>
+<label for="recover-otp">Новий код MFA власника<input id="recover-otp" inputmode="numeric" type="text" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>
+<button type="submit">Почати відновлення MFA</button>
+</form>
+<h3>Безпека та збереження подій</h3>
+<p>Журнал не містить паролів, TOTP, токенів або відкритих логінів. Перевірка retention нічого не видаляє.</p>
+<div class="toolbar">
+<button type="button" id="staff-events">Останні 50 подій</button>
+<button type="button" id="staff-retention">Перевірити retention 90 днів</button>
+</div>
 <div id="mfa-enrollment" hidden>
-<p><strong>Секрет MFA тільки для нового працівника.</strong> Введіть цей URI в застосунок TOTP через захищений канал. Не відправляйте його поштою, не публікуйте і не робіть знімків екрана.</p>
+<p><strong>Одноразовий секрет MFA співробітника.</strong> Введіть URI в застосунок TOTP лише через захищений канал. Не відправляйте його поштою, не публікуйте і не робіть знімків екрана.</p>
 <textarea id="staff-enrollment-uri" readonly rows="3" aria-label="Одноразовий URI для налаштування MFA"></textarea>
 <button type="button" id="staff-clear-enrollment" class="secondary">Приховати секрет</button>
 </div>
