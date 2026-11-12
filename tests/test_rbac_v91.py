@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main
 from app.backup_v9 import verify_snapshot, rehearsal_restore_new_sqlite, UnsafeBackup
-from app.rbac_v91 import ROUTE_ROLES, allowed_roles_for, EXTERNAL_NETWORK_ROUTES
+from app.rbac_v91 import ROUTE_ROLES, allowed_roles_for, EXTERNAL_NETWORK_ROUTES, verify_staging_database
 from app.staff_v9 import totp_at, matching_counter
 
 PASSWORD = 'An-Isolated-V91-Password-For-Tests-2026'
@@ -208,3 +208,45 @@ def test_expired_sessions_and_disabled_users_cannot_access_admin(strict_env):
             session=db.scalar(select(main.StaffSessionV9).where(main.StaffSessionV9.token_hash==token_hash))
             session.expires_at=int(time.time())-1
         assert client.get('/api/admin/maintenance/export',headers=owner).status_code==401
+
+
+def test_staging_database_guard_rejects_remote_and_persistent(strict_env):
+    from fastapi import HTTPException
+    for url in (
+        'postgresql://user:fake@ep-example.aws.neon.tech/beershop',
+        'postgresql+psycopg://user:fake@db.example.com/beershop',
+        'mysql+pymysql://user:fake@127.0.0.1/shop',
+        '',
+    ):
+        with pytest.raises(HTTPException) as exc:
+            verify_staging_database(persistent_url='', database_url=url)
+        assert exc.value.status_code == 503
+    with pytest.raises(HTTPException):
+        verify_staging_database(persistent_url='postgresql://prod-not-allowed',
+                                database_url='sqlite:///./synthetic.db')
+    verify_staging_database(persistent_url='', database_url='sqlite:///./synthetic.db')
+    strict_env.delenv('BEERSHOP_V91_ALLOW_LOCAL_POSTGRES', raising=False)
+    with pytest.raises(HTTPException):
+        verify_staging_database(persistent_url='',
+                                database_url='postgresql://test:fake@localhost:5432/test')
+    strict_env.setenv('BEERSHOP_V91_ALLOW_LOCAL_POSTGRES', '1')
+    verify_staging_database(persistent_url='',
+                            database_url='postgresql://test:fake@127.0.0.1:5432/test')
+    with pytest.raises(HTTPException):
+        verify_staging_database(persistent_url='',
+                                database_url='postgresql://test:fake@ep-neon.neon.tech:5432/test')
+
+
+def test_live_engine_cannot_be_relabelled_as_staging(strict_env):
+    # No real network: replace the detected URL only; guard must deny even
+    # before a credentials lookup. The engine still uses isolated test DB.
+    with TestClient(main.app) as client:
+        _, owner = create_login(client, 'owner')
+        strict_env.setattr(main, 'DB_URL',
+            'postgresql://test:fake@ep-example.aws.neon.tech/beershop')
+        assert client.post('/api/admin/v9/staff/login', json={
+            'username':'missingperson', 'password':PASSWORD, 'otp':'000000'
+        }).status_code == 503
+        assert client.get('/api/admin/products', headers=owner).status_code == 503
+        assert client.get('/api/admin/v9/readiness', headers=owner).status_code == 503
+        assert client.get('/api/v91/features').json()['staff_crm_login'] is False
