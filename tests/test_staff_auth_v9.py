@@ -187,3 +187,55 @@ def test_staff_ui_disabled_by_default_and_secure_when_enabled(staff_env):
         ui = c.get('/assets/staff-v9.js').text
         assert 'localStorage.setItem' not in ui
         assert 'sessionStorage.setItem' not in ui
+
+
+def test_v92_unknown_login_quota_is_db_backed_and_audit_is_private(staff_env):
+    """Unknown usernames cannot bypass lockout; credentials stay out of logs."""
+    name = 'guess'+uuid4().hex[:10]
+    owner_name = 'audit'+uuid4().hex[:10]
+    with TestClient(main.app) as client:
+        for n in range(8):
+            reply = client.post('/api/admin/v9/staff/login', json={
+                'username':name, 'password':'wrong-do-not-log-me', 'otp':'111111'})
+            assert reply.status_code == 401, (n, reply.text)
+        denied = client.post('/api/admin/v9/staff/login', json={
+            'username':name, 'password':'wrong-do-not-log-me', 'otp':'111111'})
+        assert denied.status_code == 429
+        assert int(denied.headers['retry-after']) > 0
+        with main.SessionLocal() as db:
+            from sqlalchemy import text
+            rows = db.execute(text(
+                'SELECT subject_hash, failures FROM v9_staff_login_throttle')).all()
+            assert any(count == 8 for hashed, count in rows)
+            assert name not in str(rows)
+        with main.SessionLocal() as db:
+            owner, uri = main.create_staff_user_v9(db, owner_name, STRONG, 'owner')
+        logged = client.post('/api/admin/v9/staff/login', json={
+            'username':owner_name, 'password':STRONG, 'otp':_code(uri)})
+        assert logged.status_code == 200, logged.text
+        auth = _auth(logged.json()['access_token'])
+        events = client.get('/api/admin/v9/staff/security-events', headers=auth)
+        assert events.status_code == 200, events.text
+        assert any(e['event'] == 'login_failed' for e in events.json())
+        assert any(e['event'] == 'login_success' for e in events.json())
+        assert all('username' not in e and 'otp' not in e
+                   and 'token' not in e for e in events.json())
+        assert name not in events.text
+        assert STRONG not in events.text
+        assert client.get('/api/admin/v9/staff/security-events?limit=101',
+                          headers=auth).status_code == 422
+        assert client.post('/api/admin/v9/staff/logout', headers=auth).status_code == 200
+        assert client.get('/api/admin/v9/staff/security-events',
+                          headers=auth).status_code == 401
+
+
+def test_v92_security_events_owner_only(staff_env):
+    name = 'aud'+uuid4().hex[:11]
+    with TestClient(main.app) as client:
+        with main.SessionLocal() as db:
+            user, uri = main.create_staff_user_v9(db, name, STRONG, 'auditor')
+        res = client.post('/api/admin/v9/staff/login', json={
+            'username':name, 'password':STRONG, 'otp':_code(uri)})
+        assert res.status_code == 200
+        assert client.get('/api/admin/v9/staff/security-events',
+                          headers=_auth(res.json()['access_token'])).status_code == 403
