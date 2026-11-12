@@ -171,6 +171,9 @@ def test_staff_ui_disabled_by_default_and_secure_when_enabled(staff_env):
         page=c.get('/staff-v9')
         assert page.status_code == 200
         assert 'Персональний вхід співробітника' in page.text
+        assert 'id="staff-revoke-all"' in page.text
+        assert 'id="staff-crm-access"' in page.text
+        assert '<option value="finance">' in page.text
         assert page.headers['cache-control'] == 'private, no-store'
         assert page.headers['x-frame-options'] == 'DENY'
         assert "default-src 'none'" in page.headers['content-security-policy']
