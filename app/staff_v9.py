@@ -21,9 +21,9 @@ from urllib.parse import quote
 
 from argon2 import PasswordHasher, exceptions as argon_errors
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint, select
+from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint, select, text, delete
 from sqlalchemy.orm import Mapped, mapped_column, Session
 
 ROLES = ('owner', 'catalog', 'operations', 'finance', 'auditor')
@@ -31,6 +31,10 @@ PASSWORD_HASHER = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2)
 SESSION_SECONDS = 15 * 60
 LOCK_SECONDS = 15 * 60
 MAX_FAILURES = 5
+# Additional database-wide quota includes unknown usernames.
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_LIMIT_FAILURES = 8
+LOGIN_BLOCK_SECONDS = 15 * 60
 
 
 def is_enabled():
@@ -130,6 +134,64 @@ def setup_staff_auth(app, Base, session, audit_provider):
         expires_at: Mapped[int] = mapped_column(Integer, nullable=False)
         revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    class StaffLoginThrottle(Base):
+        __tablename__ = 'v9_staff_login_throttle'
+        subject_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+        window_start: Mapped[int] = mapped_column(Integer, nullable=False)
+        failures: Mapped[int] = mapped_column(Integer, nullable=False)
+        blocked_until: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    class StaffSecurityEvent(Base):
+        __tablename__ = 'v9_staff_security_events'
+        id: Mapped[int] = mapped_column(primary_key=True)
+        event_type: Mapped[str] = mapped_column(String(36), nullable=False)
+        subject_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+        occurred_at: Mapped[int] = mapped_column(Integer, nullable=False)
+        actor_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    def digest_subject(username):
+        # No username, token, password, TOTP or IP is stored in these tables.
+        secret = base64.urlsafe_b64decode(os.environ['BEERSHOP_V9_MFA_KEY'].encode())
+        return hmac.new(secret, ('staff-auth:' + username.lower()).encode(),
+                        hashlib.sha256).hexdigest()
+
+    def audit(db, event_type, username, now, actor_id=None):
+        db.add(StaffSecurityEvent(
+            event_type=event_type, subject_hash=digest_subject(username),
+            occurred_at=now, actor_user_id=actor_id))
+
+    def record_failed_login(db, username, now, user=None):
+        """Atomic cross-process per-username throttling on SQLite/PostgreSQL."""
+        if user is not None:
+            user.failed_attempts = int(user.failed_attempts or 0) + 1
+            if user.failed_attempts >= MAX_FAILURES:
+                user.locked_until = now + LOCK_SECONDS
+                user.failed_attempts = 0
+        db.execute(text("""
+            INSERT INTO v9_staff_login_throttle
+                (subject_hash, window_start, failures, blocked_until)
+            VALUES (:subject, :now, 1, 0)
+            ON CONFLICT (subject_hash) DO UPDATE SET
+                window_start = CASE
+                    WHEN v9_staff_login_throttle.window_start <= :cutoff
+                    THEN :now ELSE v9_staff_login_throttle.window_start END,
+                failures = CASE
+                    WHEN v9_staff_login_throttle.window_start <= :cutoff
+                    THEN 1 ELSE v9_staff_login_throttle.failures + 1 END,
+                blocked_until = CASE
+                    WHEN v9_staff_login_throttle.window_start <= :cutoff THEN 0
+                    WHEN v9_staff_login_throttle.blocked_until > :now
+                    THEN v9_staff_login_throttle.blocked_until
+                    WHEN v9_staff_login_throttle.failures + 1 >= :limit
+                    THEN :now + :duration
+                    ELSE 0 END
+        """), {'subject': digest_subject(username), 'now': now,
+               'cutoff': now - LOGIN_WINDOW_SECONDS,
+               'limit': LOGIN_LIMIT_FAILURES, 'duration': LOGIN_BLOCK_SECONDS})
+        # 429 replies are not logged, to avoid flooding audit on blocked requests.
+        audit(db, 'login_failed', username, now)
+        db.commit()
+
     router = APIRouter(prefix='/api/admin/v9/staff', tags=['v9-staff-pilot'])
     def encrypt_seed(seed):
         return require_staging().encrypt(seed.encode('ascii')).decode('ascii')
@@ -167,10 +229,16 @@ def setup_staff_auth(app, Base, session, audit_provider):
     def login(data: LoginIn, db: Session = Depends(session)):
         crypto = require_staging()
         now = int(time.time())
+        # Use server-side DB state; never trust client-supplied forwarding headers.
+        throttle = db.get(StaffLoginThrottle, digest_subject(data.username))
+        if throttle and throttle.blocked_until > now:
+            raise HTTPException(429, 'Too many login attempts',
+                                headers={'Retry-After': str(throttle.blocked_until - now)})
         user = db.scalar(select(StaffUser).where(
             StaffUser.username == data.username).with_for_update())
-        # Always generic errors; no private username or MFA secret leaks.
+        # Existing, inactive, locked and unknown usernames get generic errors.
         if not user or not user.active or user.locked_until > now:
+            record_failed_login(db, data.username, now)
             raise HTTPException(401, 'Invalid credentials or MFA')
         try:
             correct_password = PASSWORD_HASHER.verify(user.password_hash, data.password)
@@ -185,11 +253,7 @@ def setup_staff_auth(app, Base, session, audit_provider):
                 raise HTTPException(503, 'MFA encryption configuration invalid') from None
         counter = matching_counter(seed, data.otp, after=user.last_totp_counter) if seed else None
         if counter is None:
-            user.failed_attempts = int(user.failed_attempts or 0) + 1
-            if user.failed_attempts >= MAX_FAILURES:
-                user.locked_until = now + LOCK_SECONDS
-                user.failed_attempts = 0
-            db.commit()
+            record_failed_login(db, data.username, now, user=user)
             raise HTTPException(401, 'Invalid credentials or MFA')
         user.failed_attempts = 0
         user.locked_until = 0
@@ -199,6 +263,9 @@ def setup_staff_auth(app, Base, session, audit_provider):
                             token_hash=hashlib.sha256(token.encode()).hexdigest(),
                             created_at=now, expires_at=now + SESSION_SECONDS, revoked=False)
         db.add(item)
+        db.execute(delete(StaffLoginThrottle).where(
+            StaffLoginThrottle.subject_hash == digest_subject(data.username)))
+        audit(db, 'login_success', data.username, now, actor_id=user.id)
         db.commit()
         return {'access_token': token, 'token_type': 'bearer',
                 'expires_in': SESSION_SECONDS, 'role': user.role}
@@ -211,8 +278,9 @@ def setup_staff_auth(app, Base, session, audit_provider):
 
     @router.post('/logout')
     def logout(identity=Depends(staff_session), db: Session = Depends(session)):
-        _, item = identity
+        user, item = identity
         item.revoked = True
+        audit(db, 'logout', user.username, int(time.time()), actor_id=user.id)
         db.commit()
         return {'revoked': True}
 
@@ -224,6 +292,7 @@ def setup_staff_auth(app, Base, session, audit_provider):
             StaffSession.user_id == user.id, StaffSession.revoked.is_(False))).all()
         for s in sessions:
             s.revoked = True
+        audit(db, 'sessions_revoked_all', user.username, int(time.time()), actor_id=user.id)
         db.commit()
         return {'revoked_sessions': len(sessions), 'all_current_sessions_closed': True}
 
@@ -237,6 +306,9 @@ def setup_staff_auth(app, Base, session, audit_provider):
             StaffSession.user_id == user_id, StaffSession.revoked.is_(False))).all()
         for s in sessions:
             s.revoked = True
+        owner, _ = identity
+        audit(db, 'sessions_revoked_by_owner', user.username, int(time.time()),
+              actor_id=owner.id)
         db.commit()
         return {'revoked_sessions': len(sessions)}
 
@@ -287,6 +359,8 @@ def setup_staff_auth(app, Base, session, audit_provider):
             raise HTTPException(409, 'Invalid or existing user') from None
         # The MFA provisioning URL is returned ONCE. Never include it in
         # any other endpoint or logs. Only use via secure staging HTTPS.
+        audit(db, 'staff_created', user.username, int(time.time()), actor_id=identity[0].id)
+        db.commit()
         return {'username': user.username, 'role': user.role,
                 'mfa_enrollment_uri': enrollment}
 
@@ -304,8 +378,19 @@ def setup_staff_auth(app, Base, session, audit_provider):
             StaffSession.user_id == user.id, StaffSession.revoked.is_(False))).all()
         for item in sessions:
             item.revoked = True
+        audit(db, 'staff_disabled', user.username, int(time.time()), actor_id=owner.id)
         db.commit()
         return {'disabled': True, 'sessions_revoked': len(sessions)}
+
+    @router.get('/security-events')
+    def security_events(limit: int = Query(default=50, ge=1, le=100),
+                        identity=Depends(require_roles('owner')),
+                        db: Session = Depends(session)):
+        rows = db.scalars(select(StaffSecurityEvent).order_by(
+            StaffSecurityEvent.id.desc()).limit(limit)).all()
+        return [{'event': item.event_type, 'at': item.occurred_at,
+                 'subject_hash': item.subject_hash, 'actor_user_id': item.actor_user_id}
+                for item in rows]
 
     app.include_router(router)
     return StaffUser, StaffSession, create_user
