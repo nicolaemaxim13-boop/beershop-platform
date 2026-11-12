@@ -48,11 +48,13 @@ function Header({
   select,
   logout,
   staffRole,
+  staffMode,
 }: {
   view?: View;
   select?: (view: View) => void;
   logout?: () => void;
   staffRole?: StaffCrmRole;
+  staffMode?: boolean;
 }) {
   return (
     <header className="topbar">
@@ -76,7 +78,7 @@ function Header({
         </nav>
       )}
       <div className="top-actions">
-        {staffRole ? <a href="/staff-v9">Персональна безпека</a> : <a href="/manage">Адмінпанель</a>}
+        {staffRole || staffMode ? <a href="/staff-v9">Персональна безпека</a> : <a href="/manage">Адмінпанель</a>}
         {logout && (
           <button
             id="logout"
@@ -513,7 +515,7 @@ export default function App() {
 
   return (
     <>
-      <Header />
+      <Header staffMode={mode === "staff"} />
       <main>
         <section id="login" className="login">
           <p className="eyebrow">BEERSHOP CRM {mode === "staff" ? " · MFA STAGING" : ""}</p>
