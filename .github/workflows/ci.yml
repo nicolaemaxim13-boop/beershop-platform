@@ -33,7 +33,7 @@ jobs:
       - name: Assert v9.7 is NO_GO and staging guardrails are still present
         run: python scripts/release_audit_v97.py --assert-no-go --assert-staging-controls --output /tmp/beershop-v97-release-gate.json
       - name: Emit model DDL schema contract for v9.8 review
-        run: python scripts/schema_contract_v98.py --output /tmp/beershop-v98-schema-contract.json
+        run: python scripts/schema_contract_v98.py --check-lock migrations_v95/schema_v98.lock.json --output /tmp/beershop-v98-schema-contract.json
       - run: node --check web/ops40.js
       - run: node --check web/store-fx.js
       - run: node --check web/pricing-admin.js
