@@ -45,8 +45,9 @@ if context.is_offline_mode():
 # Validate BEFORE importing the application, which constructs its own engine.
 url = guarded_local_url()
 from app.main import Base  # noqa: E402
+from app.storage import sqlalchemy_url  # noqa: E402
 
-engine = create_engine(url)
+engine = create_engine(sqlalchemy_url(url))
 try:
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=Base.metadata,
