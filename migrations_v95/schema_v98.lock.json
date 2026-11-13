@@ -1,0 +1,11 @@
+{
+  "format": "beershop-v98-schema-model-ddl-contract",
+  "table_count": 25,
+  "sha256": "ae3a514f186506afc821bb45a5032e828c7079c65c70d295ec043940a6566361",
+  "dialects": ["postgresql", "sqlite"],
+  "source_ci_run": "43405035724",
+  "historical_migration_frozen": false,
+  "manual_review_required": true,
+  "review_status": "model_snapshot_only_not_production_approved",
+  "notes": "Pinned model-generated SQLAlchemy DDL fingerprint. This does not freeze Alembic 0001 historical DDL or approve production database migrations."
+}
