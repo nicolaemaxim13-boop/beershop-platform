@@ -13,9 +13,10 @@ from sqlalchemy.exc import ArgumentError
 from .backup_v9 import verify_snapshot, UnsafeBackup
 
 REHEARSAL_DB_NAME = 'beershop_v94_rehearsal'
+ENCRYPTED_REHEARSAL_DB_NAME = 'beershop_v96_encrypted_restore'
 
 
-def validate_local_rehearsal_target(url: str):
+def validate_local_rehearsal_target(url: str, *, expected_name=REHEARSAL_DB_NAME):
     if (os.getenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL') != '1'
             or os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL')):
         raise UnsafeBackup('Local PostgreSQL rehearsal is not enabled')
@@ -26,19 +27,20 @@ def validate_local_rehearsal_target(url: str):
         raise UnsafeBackup('Invalid database URL') from None
     if (backend != 'postgresql'
             or parsed.host not in ('localhost', '127.0.0.1', '::1')
-            or parsed.database != REHEARSAL_DB_NAME):
+            or expected_name not in (REHEARSAL_DB_NAME, ENCRYPTED_REHEARSAL_DB_NAME)
+            or parsed.database != expected_name):
         raise UnsafeBackup('Rehearsal requires named local test-only PostgreSQL')
     return parsed
 
 
-def rehearsal_restore_empty_postgres(source, metadata, url):
+def rehearsal_restore_empty_postgres(source, metadata, url, *, expected_name=REHEARSAL_DB_NAME):
     """Verify snapshot, enforce test-only target, then restore atomically.
 
     Never drop, truncate, update or overwrite a previously existing table.
     PostgreSQL DDL and all inserts occur in one transaction.
     """
     report = verify_snapshot(source, metadata)
-    validate_local_rehearsal_target(url)
+    validate_local_rehearsal_target(url, expected_name=expected_name)
     from .storage import sqlalchemy_url
     engine = create_engine(sqlalchemy_url(url), pool_pre_ping=True)
     try:
