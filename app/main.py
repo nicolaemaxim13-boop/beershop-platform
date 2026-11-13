@@ -30,6 +30,7 @@ from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
 from .backup_v9 import add_integrity
+from .api_rate_v95 import install_api_limiter, enabled as rate_v95_enabled, validate_staging as validate_rate_v95_staging
 from .staff_v9 import setup_staff_auth, is_enabled as staff_v9_enabled, verify_bearer_staff
 from .rbac_v91 import strict_rbac_enabled, require_isolated_staging, authorize_legacy_admin_request
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
@@ -245,6 +246,9 @@ async def lifespan(app):
         verify_staging_database(persistent_url=PERSISTENT_URL, database_url=DB_URL)
         if strict_rbac_enabled():
             require_isolated_staging(persistent_url=PERSISTENT_URL, database_url=DB_URL)
+    # Explicit v9.5 opt-in must reject unsafe DBs BEFORE startup migrations.
+    if rate_v95_enabled():
+        validate_rate_v95_staging(database_url=DB_URL, persistent_url=PERSISTENT_URL)
     if PERSISTENT_URL:
         migrate_once(Base.metadata, LEGACY_URL, engine)
     Base.metadata.create_all(engine)  # Demo bootstrap; replace with Alembic migrations in production.
@@ -259,6 +263,7 @@ async def lifespan(app):
         inventory_backfill(db)
     yield
 app = FastAPI(title='BeerShop Platform', version='4.4.0', lifespan=lifespan)
+install_api_limiter(app, Base, SessionLocal, database_url=DB_URL, persistent_url=PERSISTENT_URL)
 
 def session():
     with SessionLocal() as db: yield db
