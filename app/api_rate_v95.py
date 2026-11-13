@@ -45,7 +45,7 @@ def validate_staging(*, database_url, persistent_url):
 def classify(method, path):
     if method == "POST" and path == "/api/admin/v9/staff/login":
         return "staff_login"
-    if path == "/api/checkout" and method == "POST":
+    if path == "/api/orders" and method == "POST":
         return "checkout"
     if path.startswith("/api/admin/"):
         return "admin_read" if method in ("GET", "HEAD") else "admin_write"
