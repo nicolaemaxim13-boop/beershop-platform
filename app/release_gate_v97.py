@@ -16,6 +16,8 @@ STAGING_CONTROLS = (
     'authenticated_fixture_restore',
     'guarded_fixture_migrations',
     'readonly_migration_preflight',
+    'owner_mfa_encrypted_http_export_pilot',
+    'premigrated_schema_startup_pilot',
 )
 
 # Independent human/infrastructure proof is not available in the repository.
@@ -48,6 +50,8 @@ FILES = {
     'app/auto_backup_v95.py',
     'app/pg_encrypted_restore_v96.py',
     'app/migration_preflight_v96.py',
+    'app/encrypted_export_v98.py',
+    'app/startup_preflight_v98.py',
     'migrations_v95/env.py',
     'migrations_v95/versions/0001_isolated_baseline.py',
     'migrations_v95/versions/0002_rate_counters.py',
@@ -94,6 +98,12 @@ def audit_repository(root):
         'readonly_migration_preflight': contains(
             'app/migration_preflight_v96.py', 'inspect_isolated_existing',
             'PRAGMA query_only=ON', 'SET TRANSACTION READ ONLY'),
+        'owner_mfa_encrypted_http_export_pilot': contains(
+            'app/encrypted_export_v98.py', 'encrypted_snapshot_from_session',
+            'require_synthetic_encrypted_export', 'encrypt_archive(raw, passphrase)'),
+        'premigrated_schema_startup_pilot': contains(
+            'app/startup_preflight_v98.py', 'verify_premigrated_synthetic_schema',
+            'inspect_existing', 'EXPECTED_REVISION'),
     }
     staging = [
         {'id': key, 'status': 'observed_in_source' if controls[key] else 'missing_from_source',
