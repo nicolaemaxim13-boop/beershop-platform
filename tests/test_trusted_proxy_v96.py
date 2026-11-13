@@ -95,7 +95,7 @@ def test_v96_signed_edge_is_used_for_independent_quota_buckets(monkeypatch):
     # client changes the bucket; a forged XFF cannot bypass the quota.
     with TestClient(main.app, client=('127.0.0.1', 50000)) as client:
         headers = signed_headers('192.0.2.2')
-        assert client.post('/api/orders', json={}).status_code == 422
+        assert client.post('/api/orders', json={}).status_code == 403
         for n in range(14):
             assert client.post('/api/orders', json={}, headers=headers).status_code == 422
         assert client.post('/api/orders', json={}, headers={
