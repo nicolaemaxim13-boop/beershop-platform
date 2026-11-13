@@ -8,7 +8,8 @@ from sqlalchemy import inspect
 
 def schema_inventory(connection, metadata):
     inspector = inspect(connection)
-    actual = set(inspector.get_table_names())
+    # Alembic bookkeeping is outside application metadata, not schema drift.
+    actual = set(inspector.get_table_names()) - {'alembic_version'}
     expected = {table.name: table for table in metadata.sorted_tables}
     missing_tables = sorted(set(expected) - actual)
     extra_tables = sorted(actual - set(expected))
