@@ -81,6 +81,7 @@ ROUTE_ROLES = {
     ('POST', '/api/admin/connectors41/keycrm/sync/{order_id}'): OPERATIONS,
     ('GET', '/api/admin/connectors41/nova-poshta/tracking/{order_id}'): OPERATIONS,
     ('POST', '/api/admin/connectors41/nova-poshta/sync/{order_id}'): OPERATIONS,
+    ('GET', '/api/admin/v97/release-gate'): READINESS,
     ('GET', '/api/admin/maintenance/report'): READINESS,
     ('GET', '/api/admin/maintenance/export'): OWNER,
 }
