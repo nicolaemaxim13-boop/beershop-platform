@@ -25,6 +25,11 @@ LIMITS = {
 WINDOW_SECONDS = 60
 
 
+def rate_limit_clock():
+    """UTC epoch seconds; test seam for deterministic fixed-window boundaries."""
+    return int(time.time())
+
+
 def enabled():
     return os.getenv("BEERSHOP_V95_RATE_LIMIT") == "1"
 
@@ -79,7 +84,7 @@ def install_api_limiter(app, Base, SessionLocal, *, database_url, persistent_url
         zone = classify(request.method, request.url.path)
         if not zone:
             return await call_next(request)
-        now = int(time.time())
+        now = rate_limit_clock()
         start = now - now % WINDOW_SECONDS
         from .trusted_proxy_v96 import verified_edge_client
         try:
