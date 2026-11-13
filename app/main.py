@@ -34,6 +34,8 @@ from .backup_v9 import add_integrity
 from .encrypted_export_v98 import (enabled as encrypted_export_v98_enabled,
                                    require_synthetic_encrypted_export,
                                    encrypted_snapshot_from_session)
+from .startup_preflight_v98 import (enabled as schema_managed_v98_enabled,
+                                     verify_premigrated_synthetic_schema)
 from .api_rate_v95 import install_api_limiter, enabled as rate_v95_enabled, validate_staging as validate_rate_v95_staging
 from .trusted_proxy_v96 import enabled as signed_edge_v96_enabled, validate_edge_config
 from .staff_v9 import setup_staff_auth, is_enabled as staff_v9_enabled, verify_bearer_staff
@@ -261,18 +263,25 @@ async def lifespan(app):
         # Never bootstrap a non-fixture DB with the new encrypted-export flag.
         require_synthetic_encrypted_export(database_url=DB_URL,
                                            persistent_url=PERSISTENT_URL)
-    if PERSISTENT_URL:
-        migrate_once(Base.metadata, LEGACY_URL, engine)
-    Base.metadata.create_all(engine)  # Demo bootstrap; replace with Alembic migrations in production.
-    with SessionLocal.begin() as db:
-        if not db.get(Store, 1):
-            db.add(Store(id=1, slug='beershop', name='BeerShop Equipment'))
-            db.flush()
-            cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
-            for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
-    with SessionLocal.begin() as db:
-        crm_backfill(db)
-        inventory_backfill(db)
+    if schema_managed_v98_enabled():
+        # Separate fixture-only rehearsal for future Alembic-controlled startup.
+        # No create_all, legacy copying, initial data seeding or CRM backfill.
+        verify_premigrated_synthetic_schema(
+            engine=engine, metadata=Base.metadata,
+            database_url=DB_URL, persistent_url=PERSISTENT_URL)
+    else:
+        if PERSISTENT_URL:
+            migrate_once(Base.metadata, LEGACY_URL, engine)
+        Base.metadata.create_all(engine)  # Legacy demo bootstrap; production unchanged.
+        with SessionLocal.begin() as db:
+            if not db.get(Store, 1):
+                db.add(Store(id=1, slug='beershop', name='BeerShop Equipment'))
+                db.flush()
+                cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
+                for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
+        with SessionLocal.begin() as db:
+            crm_backfill(db)
+            inventory_backfill(db)
     yield
 app = FastAPI(title='BeerShop Platform', version='4.4.0', lifespan=lifespan)
 install_api_limiter(app, Base, SessionLocal, database_url=DB_URL, persistent_url=PERSISTENT_URL)
