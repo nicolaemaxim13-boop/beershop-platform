@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from app import main
+from app import api_rate_v95 as rate_v95
 from app.api_rate_v95 import classify, validate_staging, normalized_client
 
 
@@ -15,6 +16,8 @@ def env_v95(monkeypatch):
     monkeypatch.setenv("BEERSHOP_V91_STAGING_ACK", "ISOLATED_STAGING_ONLY")
     monkeypatch.setenv("BEERSHOP_V95_RATE_KEY", "synthetic-only-" + uuid4().hex * 2)
     monkeypatch.setenv("BEERSHOP_ADMIN_TOKEN", "t"*40)
+    # Fixed clock avoids a quota assertion crossing a wall-clock minute.
+    monkeypatch.setattr(rate_v95, "rate_limit_clock", lambda: 1_900_000_020)
 
 
 def test_v95_staging_rejects_remote_without_any_migration(monkeypatch):
