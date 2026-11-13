@@ -52,7 +52,7 @@ def validate_preflight_target(url):
 
 
 def _keys(items):
-    return sorted(tuple(sorted(i)) for i in items)
+    return sorted(repr(tuple(i)) for i in items)
 
 
 def _type_signature(t):
