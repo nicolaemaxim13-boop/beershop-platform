@@ -78,6 +78,7 @@ jobs:
       BEERSHOP_V91_ALLOW_LOCAL_POSTGRES: '1' # Isolated CI PostgreSQL only
       BEERSHOP_V94_LOCAL_PG_REHEARSAL: '1' # Explicit isolated CI-only opt in
       BEERSHOP_V94_PG_REHEARSAL_URL: postgresql://beershop:test-fixture-only@localhost:5432/beershop_v94_rehearsal
+      BEERSHOP_V95_PG_MIGRATION_URL: postgresql://beershop:test-fixture-only@localhost:5432/beershop_v95_migration
       BEERSHOP_ADMIN_TOKEN: tttttttttttttttttttttttttttttttttttttttt
     steps:
       - uses: actions/checkout@v4
@@ -95,6 +96,6 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Create isolated empty PostgreSQL v9.4 restore database
         run: |
-          python -c "import psycopg; c=psycopg.connect('postgresql://beershop:test-fixture-only@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE beershop_v94_rehearsal'); c.close()"
+          python -c "import psycopg; c=psycopg.connect('postgresql://beershop:test-fixture-only@localhost:5432/postgres', autocommit=True); c.execute('CREATE DATABASE beershop_v94_rehearsal'); c.execute('CREATE DATABASE beershop_v95_migration'); c.close()"
       - run: pytest -q
 
