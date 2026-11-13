@@ -31,6 +31,7 @@ from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
 from .backup_v9 import add_integrity
 from .api_rate_v95 import install_api_limiter, enabled as rate_v95_enabled, validate_staging as validate_rate_v95_staging
+from .trusted_proxy_v96 import enabled as signed_edge_v96_enabled, validate_edge_config
 from .staff_v9 import setup_staff_auth, is_enabled as staff_v9_enabled, verify_bearer_staff
 from .rbac_v91 import strict_rbac_enabled, require_isolated_staging, authorize_legacy_admin_request
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
@@ -249,6 +250,9 @@ async def lifespan(app):
     # Explicit v9.5 opt-in must reject unsafe DBs BEFORE startup migrations.
     if rate_v95_enabled():
         validate_rate_v95_staging(database_url=DB_URL, persistent_url=PERSISTENT_URL)
+    elif signed_edge_v96_enabled():
+        # No silent no-op of a misconfigured signed-edge security requirement.
+        validate_edge_config()
     if PERSISTENT_URL:
         migrate_once(Base.metadata, LEGACY_URL, engine)
     Base.metadata.create_all(engine)  # Demo bootstrap; replace with Alembic migrations in production.
