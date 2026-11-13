@@ -30,6 +30,8 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m compileall -q app
       - run: pytest -q
+      - name: Assert v9.7 is NO_GO and staging guardrails are still present
+        run: python scripts/release_audit_v97.py --assert-no-go --assert-staging-controls --output /tmp/beershop-v97-release-gate.json
       - run: node --check web/ops40.js
       - run: node --check web/store-fx.js
       - run: node --check web/pricing-admin.js
@@ -48,6 +50,12 @@ jobs:
       - run: node --check web/crm.js
       - run: npx --prefix frontend playwright install --with-deps chromium
       - run: python tests/run_crm_browser.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: beershop-v97-no-go-audit
+          path: /tmp/beershop-v97-release-gate.json
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:
