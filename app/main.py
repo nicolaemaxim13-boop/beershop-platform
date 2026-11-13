@@ -31,6 +31,9 @@ from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
 from .release_gate_v97 import audit_repository
 from .backup_v9 import add_integrity
+from .encrypted_export_v98 import (enabled as encrypted_export_v98_enabled,
+                                   require_synthetic_encrypted_export,
+                                   encrypted_snapshot_from_session)
 from .api_rate_v95 import install_api_limiter, enabled as rate_v95_enabled, validate_staging as validate_rate_v95_staging
 from .trusted_proxy_v96 import enabled as signed_edge_v96_enabled, validate_edge_config
 from .staff_v9 import setup_staff_auth, is_enabled as staff_v9_enabled, verify_bearer_staff
@@ -254,6 +257,10 @@ async def lifespan(app):
     elif signed_edge_v96_enabled():
         # No silent no-op of a misconfigured signed-edge security requirement.
         validate_edge_config()
+    if encrypted_export_v98_enabled():
+        # Never bootstrap a non-fixture DB with the new encrypted-export flag.
+        require_synthetic_encrypted_export(database_url=DB_URL,
+                                           persistent_url=PERSISTENT_URL)
     if PERSISTENT_URL:
         migrate_once(Base.metadata, LEGACY_URL, engine)
     Base.metadata.create_all(engine)  # Demo bootstrap; replace with Alembic migrations in production.
@@ -1180,8 +1187,44 @@ def maintenance_report(db: Session = Depends(session)):
             'products_hidden': db.scalar(select(func.count()).select_from(Product).where(Product.active.is_(False))),
             'stock_positive': db.scalar(select(func.count()).select_from(Variant).where(Variant.stock > 0))}
 
+def auth_encrypted_export_v98(
+        authorization: Annotated[str | None, Header()] = None,
+        db: Session = Depends(session)):
+    # Explicit owner-only MFA verification; no shared-token fallback.
+    require_synthetic_encrypted_export(database_url=DB_URL,
+                                       persistent_url=PERSISTENT_URL)
+    user, _ = verify_bearer_staff(
+        authorization, db, StaffUserV9, StaffSessionV9)
+    if user.role != 'owner':
+        raise HTTPException(403, 'Owner MFA is required for encrypted export')
+
+
+@app.get('/api/admin/v98/maintenance/export-encrypted',
+         dependencies=[Depends(auth_encrypted_export_v98)])
+def encrypted_maintenance_export_v98(db: Session = Depends(session)):
+    # Validate again at the point of use: no fixture data read before guards.
+    passphrase = require_synthetic_encrypted_export(
+        database_url=DB_URL, persistent_url=PERSISTENT_URL)
+    encrypted = encrypted_snapshot_from_session(db, Base.metadata, passphrase)
+    return Response(content=encrypted, media_type='application/octet-stream',
+                    headers={
+                        'Content-Disposition':
+                            'attachment; filename="beershop-staging-private-v98.bse"',
+                        'Cache-Control': 'private, no-store, max-age=0',
+                        'Pragma': 'no-cache',
+                        'X-Content-Type-Options': 'nosniff',
+                        'X-Robots-Tag': 'noindex, nofollow',
+                        'Referrer-Policy': 'no-referrer',
+                    })
+
+
 @app.get('/api/admin/maintenance/export', dependencies=[Depends(auth)])
 def maintenance_export(db: Session = Depends(session)):
+    if encrypted_export_v98_enabled():
+        # Isolated staging chooses encrypted-only. Legacy production is unchanged.
+        require_synthetic_encrypted_export(database_url=DB_URL,
+                                           persistent_url=PERSISTENT_URL)
+        raise HTTPException(403, 'Plaintext backup disabled in encrypted-only staging')
     snapshot = {'format': 'beershop-snapshot-v1',
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'tables': {t.name: [dict(r._mapping) for r in db.execute(select(t)).all()]
