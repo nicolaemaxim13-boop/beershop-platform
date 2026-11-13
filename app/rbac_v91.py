@@ -83,6 +83,7 @@ ROUTE_ROLES = {
     ('POST', '/api/admin/connectors41/nova-poshta/sync/{order_id}'): OPERATIONS,
     ('GET', '/api/admin/v97/release-gate'): READINESS,
     ('GET', '/api/admin/maintenance/report'): READINESS,
+    ('GET', '/api/admin/v98/maintenance/export-encrypted'): OWNER,
     ('GET', '/api/admin/maintenance/export'): OWNER,
 }
 
