@@ -29,6 +29,7 @@ from .storage import sqlalchemy_url, migrate_once
 from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
+from .release_gate_v97 import audit_repository
 from .backup_v9 import add_integrity
 from .api_rate_v95 import install_api_limiter, enabled as rate_v95_enabled, validate_staging as validate_rate_v95_staging
 from .trusted_proxy_v96 import enabled as signed_edge_v96_enabled, validate_edge_config
@@ -1145,6 +1146,12 @@ def catalog32_js():
 def catalog32_css():
     return FileResponse(ROOT / 'web' / 'admin-catalog32.css', media_type='text/css',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+# Read-only source-level NO_GO decision. Same owner/auditor permissions as
+# v9 readiness; does not inspect or return real customer rows or secrets.
+@app.get('/api/admin/v97/release-gate', dependencies=[Depends(auth_readiness)])
+def production_release_gate_v97():
+    return audit_repository(ROOT)
 
 # Admin-only JSON snapshot. Contains customer PII; requires bearer token.
 @app.get('/api/admin/v9/readiness', dependencies=[Depends(auth_readiness)])
