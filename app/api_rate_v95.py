@@ -40,6 +40,8 @@ def validate_staging(*, database_url, persistent_url):
     key = os.getenv("BEERSHOP_V95_RATE_KEY", "")
     if len(key.encode("utf-8")) < 32:
         raise HTTPException(503, "v9.5 rate key not configured")
+    from .trusted_proxy_v96 import validate_edge_config
+    validate_edge_config()
 
 
 def classify(method, path):
@@ -79,7 +81,15 @@ def install_api_limiter(app, Base, SessionLocal, *, database_url, persistent_url
             return await call_next(request)
         now = int(time.time())
         start = now - now % WINDOW_SECONDS
-        raw = "v95:" + zone + ":" + normalized_client(request)
+        from .trusted_proxy_v96 import verified_edge_client
+        try:
+            client_address = verified_edge_client(request)
+        except HTTPException:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Verified proxy identity required"},
+                headers={"Cache-Control": "no-store"})
+        raw = "v95:" + zone + ":" + client_address
         key = os.environ["BEERSHOP_V95_RATE_KEY"].encode()
         digest = hmac.new(key, raw.encode(), hashlib.sha256).hexdigest()
         with SessionLocal.begin() as session:
