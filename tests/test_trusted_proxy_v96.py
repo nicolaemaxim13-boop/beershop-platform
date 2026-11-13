@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app import main
+from app import api_rate_v95 as rate_v95
 from app.trusted_proxy_v96 import (
     validate_edge_config, sign_edge_identity, verified_edge_client,
 )
@@ -24,6 +25,8 @@ def fixture_config(monkeypatch):
     monkeypatch.setenv('BEERSHOP_V96_EDGE_KEY', EDGE_KEY)
     monkeypatch.setenv('BEERSHOP_V96_TRUSTED_EDGE_PEERS', '127.0.0.1')
     monkeypatch.setenv('BEERSHOP_ADMIN_TOKEN', 't'*40)
+    # Rate bucket timestamps are deterministic; edge signatures use real time.
+    monkeypatch.setattr(rate_v95, 'rate_limit_clock', lambda: 1_900_000_020)
 
 
 def signed_headers(client, now=None, forwarded='198.51.100.8'):
