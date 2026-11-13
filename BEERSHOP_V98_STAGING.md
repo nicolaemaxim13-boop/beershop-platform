@@ -94,3 +94,25 @@ independently restored real offsite backups, external security review,
 secure ingress, Ukrainian compliance and stock/payment verification.
 
 **PR stays Draft. No production deployment, paid services or real data.**
+
+
+## 4. Pinned DDL contract (migration-review guard, not executable migration)
+
+The staging CI also produces the SQLite/PostgreSQL model DDL (tables and
+indexes) using `app/schema_contract_v98.py`. A schema-only SHA-256 is
+pinned in `migrations_v95/schema_v98.lock.json`. CI runs:
+
+```sh
+python scripts/schema_contract_v98.py \
+  --check-lock migrations_v95/schema_v98.lock.json \
+  --output /tmp/beershop-v98-schema-contract.json
+```
+
+The artifact `beershop-v98-schema-contract` is retained for 7 days.
+The DDL document includes NO buyer, staff, order or payment records.
+A changed model now fails the explicit fingerprint check until the
+reviewed lock is updated along with a compatible migration. This lock
+is model-derived (not a fully frozen historical migration), so it does
+**not** certify `0001_v95` for production deployment. Review generated
+DDL and SQLite/PostgreSQL compatibility independently before approving
+a revised hash. Never silence the guard by auto-updating the lock.
