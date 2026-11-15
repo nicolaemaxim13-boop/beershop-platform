@@ -18,6 +18,8 @@ STAGING_CONTROLS = (
     'readonly_migration_preflight',
     'owner_mfa_encrypted_http_export_pilot',
     'premigrated_schema_startup_pilot',
+    'checksum_locked_frozen_fixture_migration',
+    'synthetic_backup_key_rotation',
 )
 
 # Independent human/infrastructure proof is not available in the repository.
@@ -52,6 +54,8 @@ FILES = {
     'app/migration_preflight_v96.py',
     'app/encrypted_export_v98.py',
     'app/startup_preflight_v98.py',
+    'app/backup_rotation_v99.py',
+    'migrations_v95/frozen_0001_v99.json',
     'migrations_v95/env.py',
     'migrations_v95/versions/0001_isolated_baseline.py',
     'migrations_v95/versions/0002_rate_counters.py',
@@ -104,6 +108,16 @@ def audit_repository(root):
         'premigrated_schema_startup_pilot': contains(
             'app/startup_preflight_v98.py', 'verify_premigrated_synthetic_schema',
             'inspect_existing', 'EXPECTED_REVISION'),
+        'checksum_locked_frozen_fixture_migration': (
+            contains('migrations_v95/versions/0001_isolated_baseline.py',
+                     'FROZEN_SHA256', 'load_frozen_baseline',
+                     'conn.exec_driver_sql(sql)')
+            and contains('migrations_v95/frozen_0001_v99.json',
+                         'payload_sha256', 'beershop-v99-frozen-0001-DDL')),
+        'synthetic_backup_key_rotation': contains(
+            'app/backup_rotation_v99.py', 'rotate_synthetic_archive',
+            'decrypt_archive(envelope, old_passphrase)',
+            'write_private_exclusive'),
     }
     staging = [
         {'id': key, 'status': 'observed_in_source' if controls[key] else 'missing_from_source',
@@ -120,6 +134,7 @@ def audit_repository(root):
         'Base.metadata.create_all(bind' in
         source['migrations_v95/versions/0001_isolated_baseline.py']
     )
+    frozen_fixture_migration = controls['checksum_locked_frozen_fixture_migration']
     plaintext_export = (
         'def maintenance_export' in source['app/main.py']
         and "json.dumps(snapshot" in source['app/main.py']
@@ -137,6 +152,9 @@ def audit_repository(root):
             'status': 'block',
             'reason': ('Alembic initial revision imports current model metadata'
                        if metadata_driven_migration else
+                       ('Fixture DDL frozen with a checksum, but production '
+                        'upgrade/rollback lineage and independent review are missing')
+                       if frozen_fixture_migration else
                        'No independently approved historical migration chain'),
         },
         {
