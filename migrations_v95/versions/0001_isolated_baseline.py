@@ -46,7 +46,7 @@ def load_frozen_baseline(dialect_name):
         if (not isinstance(sql, list)
                 or sum(x.startswith('CREATE TABLE ') for x in sql) != BASELINE_TABLE_COUNT
                 or not all(isinstance(x, str)
-                           and re.fullmatch(r'CREATE (?:TABLE|(?:UNIQUE )?INDEX)\\b.*', x)
+                           and x.startswith(('CREATE TABLE ', 'CREATE INDEX ', 'CREATE UNIQUE INDEX '))
                            and ';' not in x and len(x) <= 10000 for x in sql)):
             raise RuntimeError('Frozen migration SQL not allowlisted')
         return manifest['tables'], sql
