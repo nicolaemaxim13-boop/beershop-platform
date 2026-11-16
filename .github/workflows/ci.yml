@@ -47,6 +47,8 @@ jobs:
       - run: node --check tests/readiness_v9_browser.cjs
       - run: node --check web/storefront-v5.js
       - run: node --check web/storefront-v7.js
+      - run: node --check web/ux-p1.js
+      - run: node --check tests/p1_ux_browser.cjs
       - run: node --check web/admin-gallery-v8.js
       - run: node --check web/admin-catalog32.js
       - run: node --check tests/gallery_v8_browser.cjs
