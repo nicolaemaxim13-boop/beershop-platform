@@ -23,6 +23,8 @@ jobs:
       - run: npm ci --prefix frontend
       - run: npm run build --prefix frontend
       - run: npm test --prefix frontend
+      - name: Quick P1 regression without browser or external services
+        run: node tests/p1_quick_js.cjs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -49,6 +51,7 @@ jobs:
       - run: node --check web/storefront-v7.js
       - run: node --check web/ux-p1.js
       - run: node --check tests/p1_ux_browser.cjs
+      - run: node --check tests/p1_quick_js.cjs
       - run: node --check web/admin-gallery-v8.js
       - run: node --check web/admin-catalog32.js
       - run: node --check tests/gallery_v8_browser.cjs
