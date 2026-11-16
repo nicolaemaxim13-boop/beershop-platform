@@ -86,9 +86,57 @@ async function testCheckoutGuard() {
   assert.match(confirmation.textContent,/Оплата ще не підтверджена/);
   assert.equal(button.disabled,false);
 }
+async function testRapidDoubleTapAndServerError() {
+  const code = fs.readFileSync(path.join(ROOT, 'web', 'store-fx.js'), 'utf8');
+  let releaseQuote;
+  const deferred = new Promise(resolve => {releaseQuote = resolve;});
+  const requests = [], events = [], errors = [];
+  const button = {disabled:false};
+  const context = {
+    document: {getElementById: id => id === 'orderbtn' ? button : null},
+    window: {BeerShopP1: {event: event => events.push(event), status: () => {}}},
+    cart: {42: {qty:1,price:135}}, pendingKey: null,
+    renderCart:()=>{}, toggleCart:()=>{}, reload:()=>{},
+    msg: error => errors.push(error), fmt: String,
+    crypto: {randomUUID:() => 'synthetic-key'},
+    FormData: class {constructor() {
+      return [['name','Synthetic Customer'],['email','only@example.test']];
+    }},
+    fetch: async url => {
+      requests.push(url);
+      if (url === '/api/quote') {
+        await deferred;
+        return {ok:true, json: async () => ({
+          total:'135.00',items:[{variant_id:42,unit_price_uah:'135.00'}]
+        })};
+      }
+      if (url === '/api/orders') {
+        return {ok:false, json: async () => ({detail:'Synthetic order error'})};
+      }
+      throw Error('Unexpected request');
+    },
+    setInterval: () => {},
+  };
+  vm.runInNewContext(code, context, {filename:'store-fx.js'});
+  const e = {preventDefault:()=>{},target:{reset:()=>{
+    throw Error('Never reset form on failed order');
+  }}};
+  const first = context.placeOrder(e);
+  const second = context.placeOrder(e);
+  assert.equal(requests.filter(r=>r==='/api/quote').length,1);
+  assert.equal(events.filter(x=>x==='checkout_attempt').length,1);
+  releaseQuote();
+  await Promise.all([first,second]);
+  assert.equal(requests.filter(r=>r==='/api/orders').length,1);
+  assert.equal(events.filter(x=>x==='checkout_error').length,1);
+  assert.equal(errors.at(-1),'Synthetic order error');
+  assert.equal(button.disabled,false);
+}
+
 (async()=>{
   await testAnonymousQueue(true);
   await testAnonymousQueue(false);
   await testCheckoutGuard();
+  await testRapidDoubleTapAndServerError();
   console.log('P1 quick JS passed: feature-gated PII-free buffering and server-quote reconfirmation');
 })().catch(error=>{console.error(error);process.exitCode=1});
