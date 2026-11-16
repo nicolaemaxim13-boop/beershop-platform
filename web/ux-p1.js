@@ -5,6 +5,8 @@
 (function () {
   'use strict';
   let syntheticMetrics = false;
+  let capabilitiesResolved = false;
+  const pendingEvents = [];
   const events = new Set([
     'catalog_view', 'product_view', 'cart_add',
     'checkout_open', 'checkout_attempt', 'checkout_success',
@@ -17,14 +19,23 @@
     error: 'Замовлення не підтверджено. Перевірте помилку; введені контакти залишилися у формі.',
     success: 'Замовлення прийнято; оплата не списувалася. Очікуйте підтвердження менеджера.'
   };
-  function event(name) {
-    if (!syntheticMetrics || !events.has(name)) return;
+  function postAnonymousEvent(name) {
     // Exact event enum only. Never serialize FormData, URL, cart, buyer info.
     fetch('/api/p1/ux-event', {
       method: 'POST', credentials: 'same-origin', cache: 'no-store',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({event: name})
     }).catch(() => { /* Never block a real checkout for test metrics. */ });
+  }
+  function event(name) {
+    if (!events.has(name)) return;
+    if (!capabilitiesResolved) {
+      // Only a small event-name queue. Never hold forms, URL, contact values,
+      // product names, quantities, identifiers or arbitrary user data.
+      if (pendingEvents.length < 20) pendingEvents.push(name);
+      return;
+    }
+    if (syntheticMetrics) postAnonymousEvent(name);
   }
   function status(name) {
     const el = document.getElementById('p1-checkout-status');
@@ -72,13 +83,22 @@
     .then(resp => resp.ok ? resp.json() : {analytics_enabled: false})
     .then(data => {
       syntheticMetrics = data.analytics_enabled === true;
-      if (!syntheticMetrics) return;
+      capabilitiesResolved = true;
+      if (!syntheticMetrics) {
+        pendingEvents.length = 0;
+        return;
+      }
+      pendingEvents.splice(0).forEach(postAnonymousEvent);
       const caption = document.getElementById('p1-ux-privacy');
       if (caption) {
         caption.hidden = false;
         caption.textContent = 'Тестовий режим: лише знеособлені лічильники подій, без cookie, IP та контактів.';
       }
       event(location.pathname.startsWith('/products/') ? 'product_view' : 'catalog_view');
-    }).catch(() => { syntheticMetrics = false; });
+    }).catch(() => {
+      syntheticMetrics = false;
+      capabilitiesResolved = true;
+      pendingEvents.length = 0;
+    });
   status('idle');
 })();
