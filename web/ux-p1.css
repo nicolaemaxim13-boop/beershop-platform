@@ -1,0 +1,57 @@
+/* BeerShop P1 — mobile-first checkout, no external dependencies. */
+#cart { overflow-x:hidden; overscroll-behavior:contain; }
+#cart form#checkout { min-width:0; }
+#cart #checkout label {
+  display:grid; gap:6px; min-width:0; font-weight:650;
+  color:#213f32; line-height:1.45;
+}
+#cart #checkout input {
+  display:block; width:100%; min-width:0; min-height:49px;
+  font:inherit; font-size:16px; border-radius:11px;
+  padding:12px 14px; background:#fff; color:#173b2b;
+}
+#cart #checkout input:focus-visible, #cart #checkout button:focus-visible {
+  outline:3px solid #3f805c; outline-offset:2px;
+}
+#cart #checkout .p1-checkout-note {
+  margin:4px 0 0; padding:11px 13px; border-radius:11px;
+  font-size:13px; line-height:1.55; color:#244a37;
+  background:#edf4e9; border:1px solid #d2e1d2;
+}
+#p1-checkout-status {
+  display:block; min-height:20px; font-size:13px; line-height:1.5;
+  color:#3a5847; margin:2px 0;
+}
+#p1-checkout-status[data-state=error],
+#p1-checkout-status[data-state=price_changed] {color:#8f3b27;font-weight:700}
+#p1-checkout-status[data-state=success] {color:#2e7048;font-weight:700}
+#cart #orderbtn {
+  width:100%; min-height:51px; font-size:16px;
+  padding:13px 18px; border-radius:12px;
+  position:sticky; bottom:calc(8px + env(safe-area-inset-bottom));
+  z-index:1; box-shadow:0 6px 20px #123f311c;
+}
+#checkout-confirmation { scroll-margin-top:90px; line-height:1.6; }
+#checkout-confirmation .p1-confirmation-clarity {
+  display:block; font-size:13px; margin-top:10px; font-weight:550;
+}
+#p1-ux-privacy {
+  font-size:12px; line-height:1.5; color:#506d5b;
+  margin:0; padding:8px 0;
+}
+@media(max-width:600px){
+  #cart.cart {
+    inset:0; width:100%; max-width:100vw;
+    height:100dvh; padding:17px 16px calc(25px + env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling:touch;
+  }
+  #cart > .row:first-child {
+    position:sticky; top:-17px; z-index:2;
+    background:#fff; padding:13px 0; border-bottom:1px solid #e1e8df;
+  }
+  #cart #checkout {gap:12px}
+  #cart #orderbtn {bottom:calc(6px + env(safe-area-inset-bottom))}
+}
+@media(prefers-reduced-motion:reduce){
+  #cart, #checkout-confirmation {scroll-behavior:auto}
+}
