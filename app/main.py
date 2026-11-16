@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
 from fastapi import FastAPI, Depends, Header, HTTPException, Query, UploadFile, File, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.exc import IntegrityError
@@ -30,6 +30,13 @@ from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
 from .readiness_v9 import build_report, valid_ukrainian_iban
 from .release_gate_v97 import audit_repository
+from .ux_p1 import (enabled_for_fixture as p1_ux_enabled,
+                    require_fixture as require_p1_fixture,
+                    record as record_p1_event,
+                    report as p1_conversion_report,
+                    preview_notification_templates as p1_notification_previews,
+                    EVENTS as P1_EVENTS)
+from .seo_p1 import product_preview_html
 from .backup_v9 import add_integrity
 from .encrypted_export_v98 import (enabled as encrypted_export_v98_enabled,
                                    require_synthetic_encrypted_export,
@@ -531,6 +538,64 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
     return {'currency': 'UAH', 'total': str(total), 'items': details,
             'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
 
+class P1FunnelEvent(BaseModel):
+    # Exactly one finite event name. Reject arbitrary text or buyer PII.
+    model_config = ConfigDict(extra='forbid')
+    event: Literal[
+        'catalog_view', 'product_view', 'cart_add',
+        'checkout_open', 'checkout_attempt', 'checkout_success',
+        'checkout_error', 'checkout_price_changed'
+    ]
+
+
+@app.get('/api/p1/ux-capabilities')
+def p1_ux_capabilities():
+    return JSONResponse(
+        {'analytics_enabled': p1_ux_enabled(DB_URL, PERSISTENT_URL),
+         'mode': 'synthetic_aggregate_only'},
+        headers={'Cache-Control': 'no-store'})
+
+
+@app.post('/api/p1/ux-event', status_code=204)
+def p1_ux_event(payload: P1FunnelEvent, request: Request):
+    require_p1_fixture(DB_URL, PERSISTENT_URL)
+    # Extra defense: browser fixture runs only via local loopback peer.
+    if not request.client or request.client.host not in ('127.0.0.1', '::1', 'testclient'):
+        raise HTTPException(404, 'Not found')
+    record_p1_event(payload.event)
+    return Response(status_code=204, headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/api/admin/p1/ux-report', dependencies=[Depends(auth_readiness)])
+def p1_ux_report():
+    require_p1_fixture(DB_URL, PERSISTENT_URL)
+    return JSONResponse(p1_conversion_report(),
+                        headers={'Cache-Control': 'private, no-store'})
+
+
+@app.get('/api/admin/p1/notification-previews', dependencies=[Depends(auth_readiness)])
+def p1_notification_previews():
+    require_p1_fixture(DB_URL, PERSISTENT_URL)
+    return JSONResponse(p1_notification_previews(),
+                        headers={'Cache-Control': 'private, no-store'})
+
+
+@app.get('/assets/ux-p1.js')
+def p1_ux_javascript():
+    return FileResponse(ROOT / 'web' / 'ux-p1.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store',
+                                 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/assets/ux-p1.css')
+def p1_ux_stylesheet():
+    return FileResponse(ROOT / 'web' / 'ux-p1.css',
+                        media_type='text/css',
+                        headers={'Cache-Control': 'no-store',
+                                 'X-Content-Type-Options': 'nosniff'})
+
+
 @app.get('/api/health')
 def health(): return {'status': 'ok', 'version': '4.4.0'}
 @app.get('/api/categories')
@@ -750,14 +815,22 @@ def manage():
 def storefront_product_page(slug: str, db: Session = Depends(session)):
     if not re.fullmatch(r'[a-z0-9-]{2,130}', slug):
         raise HTTPException(404, 'Product not found')
-    visible = db.scalar(select(Product.id).where(Product.store_id == 1,
+    visible = db.scalar(select(Product).where(Product.store_id == 1,
         Product.slug == slug, Product.active.is_(True)))
     if visible is None:
         raise HTTPException(404, 'Product not found')
-    return FileResponse(ROOT / 'web' / 'index.html', headers={
+    headers = {
         'Cache-Control': 'no-store, no-cache, max-age=0, must-revalidate',
         'X-Content-Type-Options': 'nosniff'
-    })
+    }
+    # Isolated local P1 preview only; no public canonical/indexing claim.
+    if p1_ux_enabled(DB_URL, PERSISTENT_URL):
+        rendered = product_preview_html(
+            (ROOT / 'web' / 'index.html').read_text(encoding='utf-8'),
+            visible)
+        return HTMLResponse(content=rendered, headers={
+            **headers, 'X-Robots-Tag': 'noindex, nofollow'})
+    return FileResponse(ROOT / 'web' / 'index.html', headers=headers)
 
 @app.get('/api/admin/products', dependencies=[Depends(auth)])
 def admin_products(db: Session = Depends(session)):
