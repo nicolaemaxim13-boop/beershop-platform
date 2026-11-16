@@ -99,3 +99,47 @@ and SMS/email templates. It aborts all outbound non-local URLs.
 The v9.7 release decision remains **NO-GO**. P1 usability work must
 not override security and commerce-readiness blockers. The real website
 is not deployed or changed by this PR.
+
+
+## GitHub Actions runner assignment failure (2026-11-16)
+
+Latest attempted P1 run:
+`https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/43891414861`.
+Both jobs (`test`, `postgres`) failed in approximately 2 seconds, **before
+assignment to any runner**: `runner_name=""`, `steps=[]` and there
+are no downloadable step logs. A retry (run attempt 2) reproduced
+the same result. This is a **runner provisioning/account Actions
+eligibility blocker**, not evidence of a Python, JavaScript, pytest
+or Playwright assertion failing. The exact account-level cause has not
+been verified and may involve billing limits, repository Actions policy,
+or GitHub provisioning.
+
+**No new paid service or billing change is authorized.** The repo
+owner can inspect GitHub account `Settings → Billing and licensing →
+Usage`, selecting Actions, and check whether the included quota or
+blocking budget was reached. Also review repository `Settings →
+Actions → General` policies. If quotas are available and permissions
+are enabled, contact GitHub Support with the run and job IDs and note
+`runner_name=""`, `steps=[]`, no logs. Do NOT bypass the check,
+merge or deploy to production.
+
+Once a runner is again available, run the existing staging CI as-is.
+For a **local isolated clone only**, the verification commands are:
+
+```sh
+npm ci --prefix frontend
+npm run build --prefix frontend
+npm test --prefix frontend
+python -m compileall -q app
+node --check web/ux-p1.js
+node --check web/store-fx.js
+node --check tests/p1_ux_browser.cjs
+pytest -q tests/test_ux_p1.py
+# Full local browser suite (will start a temporary synthetic database
+# and a local-only server, without real customer data):
+python tests/run_crm_browser.py
+```
+
+The full browser runner requires Playwright Chromium and Python/Node
+dependencies. The newly added tests have **not** been verified by
+hosted CI. Previous passing v9.9 jobs do not certify P1.
