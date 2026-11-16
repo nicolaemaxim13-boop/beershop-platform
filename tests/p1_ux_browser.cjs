@@ -80,6 +80,10 @@ const auth = { Authorization: 'Bearer ' + (process.env.CRM_TEST_TOKEN || 't'.rep
     await page.locator('#cart').waitFor({state:'visible'});
     await page.locator('#cart').getByRole('button',{name:'Закрити кошик'}).click();
     await page.locator('#cart-toggle').click();
+    // Native form validation must block an empty mobile checkout.
+    await page.locator('#orderbtn').click();
+    assert(await page.locator('#checkout [name=name]').evaluate(
+      input => input.validity.valueMissing));
     await page.locator('#checkout [name=name]').fill('P1 Fake Buyer');
     await page.locator('#checkout [name=email]').fill('p1-'+stamp+'@example.test');
     await page.locator('#checkout [name=phone]').fill('+380501234567');
@@ -114,7 +118,11 @@ const auth = { Authorization: 'Bearer ' + (process.env.CRM_TEST_TOKEN || 't'.rep
 
     const placedPromise=page.waitForResponse(r =>
       new URL(r.url()).pathname === '/api/orders' && r.request().method() === 'POST');
-    await page.locator('#orderbtn').click();
+    // Two rapid taps must generate only one order request.
+    await page.locator('#orderbtn').evaluate(button => {
+      button.click();
+      button.click();
+    });
     const placed=await placedPromise;
     assert.equal(placed.status(),201,await placed.text());
     assert.equal(orderRequests,1,'Duplicate checkout requests');
@@ -123,8 +131,17 @@ const auth = { Authorization: 'Bearer ' + (process.env.CRM_TEST_TOKEN || 't'.rep
     assert.match(await page.locator('#checkout-confirmation').textContent(),/Оплата ще не підтверджена/);
     assert.match(await page.locator('.p1-confirmation-clarity').textContent(),/SMS та email поки не надсилаються/);
 
-    // Synthetic, anonymous in-memory totals; no user identifiers or buyer PII.
-    await page.waitForTimeout(300);
+    // Wait for asynchronous event-only requests, not an arbitrary sleep.
+    await page.waitForFunction(async () => {
+      const response = await fetch('/api/admin/p1/ux-report', {
+        headers: { Authorization: 'Bearer ' + 't'.repeat(40) }
+      });
+      if (!response.ok) return false;
+      const result = await response.json();
+      return result.events.checkout_success >= 1 &&
+             result.events.checkout_price_changed >= 2 &&
+             result.events.checkout_attempt >= 3;
+    });
     const metrics = await api('GET','/api/admin/p1/ux-report');
     assert.equal(metrics.mode,'SYNTHETIC_AGGREGATE_IN_MEMORY');
     assert(metrics.events.checkout_attempt >= 3);
