@@ -212,3 +212,24 @@ def test_v101_foreign_key_contract_rejects_missing_constraint():
 
     with pytest.raises(AssertionError, match='Foreign-key schema drift'):
         _assert_foreign_key_contract(main.Base.metadata, MissingForeignKeys())
+
+
+def test_v101_foreign_key_contract_rejects_unexpected_constraint():
+    """A malicious or drifted extra FK must fail even when required FKs exist."""
+    class ExtraForeignKeyInspector:
+        def get_foreign_keys(self, table_name):
+            table = main.Base.metadata.tables[table_name]
+            expected = [
+                {'constrained_columns': list(fk.column_keys),
+                 'referred_table': fk.referred_table.name,
+                 'referred_columns': [element.column.name for element in fk.elements]}
+                for fk in table.foreign_key_constraints
+            ]
+            if table_name == 'stores':
+                expected.append({'constrained_columns': ['id'],
+                                 'referred_table': 'categories',
+                                 'referred_columns': ['id']})
+            return expected
+
+    with pytest.raises(AssertionError, match='Foreign-key schema drift in stores'):
+        _assert_foreign_key_contract(main.Base.metadata, ExtraForeignKeyInspector())
