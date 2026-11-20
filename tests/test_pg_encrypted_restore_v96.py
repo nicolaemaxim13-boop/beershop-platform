@@ -109,7 +109,9 @@ def test_v96_decrypt_then_restore_exactly_once_in_pg_ci(monkeypatch):
         for table in main.Base.metadata.sorted_tables:
             actual = db.scalar(select(func.count()).select_from(table))
             assert actual == manifest['counts'][table.name], table.name
-        assert set(__import__('sqlalchemy').inspect(db).get_table_names()) == set(manifest['counts'])
+        inspector = __import__('sqlalchemy').inspect(db)
+        assert set(inspector.get_table_names()) == set(manifest['counts'])
+        _assert_foreign_key_contract(main.Base.metadata, inspector)
     engine.dispose()
     with pytest.raises(UnsafeBackup, match='no tables'):
         rehearsal_restore_encrypted_postgres(
@@ -184,3 +186,29 @@ def test_v101_pg_authenticated_count_manifest_mismatch_fails_before_connect(monk
         rehearsal_restore_encrypted_postgres(
             encrypted, PASS, main.Base.metadata,
             'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
+
+
+def _assert_foreign_key_contract(metadata, inspector):
+    """Compare restored foreign-key definitions, not only table/row counts."""
+    for table in metadata.sorted_tables:
+        expected = {
+            (tuple(fk.column_keys), fk.referred_table.name,
+             tuple(element.column.name for element in fk.elements))
+            for fk in table.foreign_key_constraints
+        }
+        actual = {
+            (tuple(fk['constrained_columns']), fk['referred_table'],
+             tuple(fk['referred_columns']))
+            for fk in inspector.get_foreign_keys(table.name)
+        }
+        assert actual == expected, f'Foreign-key schema drift in {table.name}'
+
+
+def test_v101_foreign_key_contract_rejects_missing_constraint():
+    """A matching table list and row counts cannot conceal missing FK DDL."""
+    class MissingForeignKeys:
+        def get_foreign_keys(self, table_name):
+            return []
+
+    with pytest.raises(AssertionError, match='Foreign-key schema drift'):
+        _assert_foreign_key_contract(main.Base.metadata, MissingForeignKeys())
