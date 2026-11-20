@@ -105,3 +105,28 @@ def test_existing_target_and_non_temp_destination_refused(tmp_path):
     assert target.read_bytes() == b"DO-NOT-OVERWRITE"
     with pytest.raises(UnsafeBackup):
         rehearsal_restore_new_sqlite(raw, Base.metadata, Path("/var/lib/beershop-v101.db"))
+
+
+def test_authenticated_but_invalid_manifest_never_creates_target(tmp_path):
+    # A valid AES-GCM tag is not sufficient: the inner snapshot must also pass
+    # the application manifest/schema checks before any restore file is created.
+    payload = json.loads(synthetic_archive())
+    payload["integrity"]["schema_sha256"] = "f" * 64
+    encrypted = encrypt_archive(json.dumps(payload).encode(), PASSWORD)
+    authenticated = decrypt_archive(encrypted, PASSWORD)
+    target = tmp_path / "bad-schema.db"
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_new_sqlite(authenticated, Base.metadata, target)
+    assert not target.exists()
+
+
+def test_authenticated_archive_with_missing_required_table_refused(tmp_path):
+    payload = json.loads(synthetic_archive())
+    payload["tables"].pop("stores")
+    encrypted = encrypt_archive(json.dumps(payload).encode(), PASSWORD)
+    target = tmp_path / "missing-table-encrypted.db"
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_new_sqlite(
+            decrypt_archive(encrypted, PASSWORD), Base.metadata, target
+        )
+    assert not target.exists()
