@@ -82,3 +82,12 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Added synthetic negative PostgreSQL restore test: re-encrypting a modified store row under the valid password must still fail the application snapshot digest **before any database connection**. Commit `26418c4e4c850e48b56464459210060c4f984f84`.
 - Previous head CI run `44785029755` failed with both jobs reporting `steps=null`, before test execution. This change is **not CI-verified**; keep NO_GO.
 - **Next:** independently execute the PostgreSQL fixture and strengthen successful restore verification with per-table row counts and schema fingerprint, without connecting to any persistent or remote database. CI runner provisioning remains P0.
+
+### 2026-11-20 v10.1 PostgreSQL full-table verification increment
+
+- Expanded the existing **opt-in disposable PostgreSQL restore** test to compare **every table's actual restored row count** with the AES-GCM-authenticated snapshot manifest, including empty tables. It also asserts the full table-name set, total rows and expected metadata schema digest. This is fixture verification, not a production restore certification.
+- Added a negative test: a re-encrypted archive with forged per-table counts must be rejected during manifest verification **before a database connection**.
+- Commits: `ea20069918a4ad198b14eee7901c79984ebae4d6`, `6cc460b21186e13f4df16165d96317258b298a50`.
+- Last checked CI for previous branch head: [run 44794148549](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44794148549) failed before runner assignment; both jobs have `steps=null` and no logs. **New changes not CI-verified.**
+- **Next:** once GitHub Actions runner provisioning is restored, run the complete disposable PostgreSQL restore fixture and inspect any actual assertion failures; separately consider read-only PostgreSQL schema/constraint fingerprint checks. Do not change live databases or weaken checks.
+- Release remains **NO_GO**; Draft PR only.
