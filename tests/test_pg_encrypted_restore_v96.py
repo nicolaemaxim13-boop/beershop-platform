@@ -112,6 +112,7 @@ def test_v96_decrypt_then_restore_exactly_once_in_pg_ci(monkeypatch):
         inspector = __import__('sqlalchemy').inspect(db)
         assert set(inspector.get_table_names()) == set(manifest['counts'])
         _assert_foreign_key_contract(main.Base.metadata, inspector)
+        _assert_unique_constraint_contract(main.Base.metadata, inspector)
     engine.dispose()
     with pytest.raises(UnsafeBackup, match='no tables'):
         rehearsal_restore_encrypted_postgres(
@@ -233,3 +234,61 @@ def test_v101_foreign_key_contract_rejects_unexpected_constraint():
 
     with pytest.raises(AssertionError, match='Foreign-key schema drift in stores'):
         _assert_foreign_key_contract(main.Base.metadata, ExtraForeignKeyInspector())
+
+
+
+def _assert_unique_constraint_contract(metadata, inspector):
+    """Reject missing or unexpected PostgreSQL UNIQUE constraints after restore.
+
+    Compare column sets, not generated constraint names (dialect-dependent).
+    Unique indexes that are not SQL UNIQUE constraints are checked separately.
+    """
+    from sqlalchemy import UniqueConstraint
+
+    for table in metadata.sorted_tables:
+        expected = {
+            tuple(column.name for column in constraint.columns)
+            for constraint in table.constraints
+            if isinstance(constraint, UniqueConstraint)
+        }
+        actual = {
+            tuple(item["column_names"])
+            for item in inspector.get_unique_constraints(table.name)
+        }
+        assert actual == expected, f"Unique-constraint schema drift in {table.name}"
+
+
+def test_v101_unique_contract_rejects_missing_constraint():
+    """An inspector dropping all UNIQUE constraints must fail."""
+    class MissingUniqueInspector:
+        def get_unique_constraints(self, table_name):
+            return []
+
+    from sqlalchemy import UniqueConstraint
+    assert any(
+        isinstance(constraint, UniqueConstraint)
+        for table in main.Base.metadata.sorted_tables
+        for constraint in table.constraints
+    ), "Synthetic model fixture must contain a UNIQUE constraint"
+    with pytest.raises(AssertionError, match="Unique-constraint schema drift"):
+        _assert_unique_constraint_contract(main.Base.metadata, MissingUniqueInspector())
+
+
+def test_v101_unique_contract_rejects_unexpected_constraint():
+    """Extra UNIQUE DDL is drift, even when all expected constraints remain."""
+    from sqlalchemy import UniqueConstraint
+
+    class ExtraUniqueInspector:
+        def get_unique_constraints(self, table_name):
+            table = main.Base.metadata.tables[table_name]
+            constraints = [
+                {"column_names": [column.name for column in constraint.columns]}
+                for constraint in table.constraints
+                if isinstance(constraint, UniqueConstraint)
+            ]
+            if table_name == "stores":
+                constraints.append({"column_names": ["name"]})
+            return constraints
+
+    with pytest.raises(AssertionError, match="Unique-constraint schema drift in stores"):
+        _assert_unique_constraint_contract(main.Base.metadata, ExtraUniqueInspector())
