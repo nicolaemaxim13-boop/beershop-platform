@@ -113,6 +113,7 @@ def test_v96_decrypt_then_restore_exactly_once_in_pg_ci(monkeypatch):
         assert set(inspector.get_table_names()) == set(manifest['counts'])
         _assert_foreign_key_contract(main.Base.metadata, inspector)
         _assert_unique_constraint_contract(main.Base.metadata, inspector)
+        _assert_check_constraint_contract(main.Base.metadata, inspector)
     engine.dispose()
     with pytest.raises(UnsafeBackup, match='no tables'):
         rehearsal_restore_encrypted_postgres(
@@ -292,3 +293,74 @@ def test_v101_unique_contract_rejects_unexpected_constraint():
 
     with pytest.raises(AssertionError, match="Unique-constraint schema drift in stores"):
         _assert_unique_constraint_contract(main.Base.metadata, ExtraUniqueInspector())
+
+
+def _assert_check_constraint_contract(metadata, inspector):
+    """Compare explicit CHECK SQL on restored PostgreSQL tables.
+
+    Normalize whitespace only: do not discard operators, literals or clauses.
+    PostgreSQL may rewrite expressions, so an unexpected rewrite fails closed
+    for manual review instead of silently approving a restore.
+    """
+    import re
+    from sqlalchemy import CheckConstraint
+
+    def normalized(sql):
+        return re.sub(r"\\s+", " ", str(sql).strip()).lower()
+
+    for table in metadata.sorted_tables:
+        expected = {
+            normalized(constraint.sqltext)
+            for constraint in table.constraints
+            if isinstance(constraint, CheckConstraint)
+        }
+        actual = {
+            normalized(item["sqltext"])
+            for item in inspector.get_check_constraints(table.name)
+        }
+        assert actual == expected, f"Check-constraint schema drift in {table.name}"
+
+
+def test_v101_check_contract_rejects_missing_constraint():
+    """Missing CHECK cannot be accepted even if all tables are present."""
+    from sqlalchemy import MetaData, Table, Column, Integer, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("quantity", Integer),
+          CheckConstraint("quantity >= 0"))
+
+    class MissingCheckInspector:
+        def get_check_constraints(self, table_name):
+            return []
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, MissingCheckInspector())
+
+
+def test_v101_check_contract_rejects_unexpected_constraint():
+    """An extra CHECK must not be ignored by the schema audit."""
+    from sqlalchemy import MetaData, Table, Column, Integer, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("quantity", Integer),
+          CheckConstraint("quantity >= 0"))
+
+    class ExtraCheckInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "quantity >= 0"},
+                    {"sqltext": "quantity <= 999"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ExtraCheckInspector())
+
+
+def test_v101_check_contract_accepts_whitespace_only_variation():
+    """Whitespace variation must not cause a spurious drift report."""
+    from sqlalchemy import MetaData, Table, Column, Integer, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("quantity", Integer),
+          CheckConstraint("quantity >= 0"))
+
+    class EquivalentCheckInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "  QUANTITY   >=   0  "}]
+
+    _assert_check_constraint_contract(metadata, EquivalentCheckInspector())
