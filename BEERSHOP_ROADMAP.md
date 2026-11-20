@@ -97,3 +97,9 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Added a read-only foreign-key metadata comparison after the existing disposable PostgreSQL encrypted restore test: constrained columns, referenced tables and referenced columns must match SQLAlchemy metadata for every table. Negative unit test simulates missing foreign keys and requires a hard failure. Code commit `9c69b287ff7e2bf6c57a2f235a3671685e2080d0`.
 - Prior branch HEAD GitHub Actions [run 44804450141](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44804450141) failed before test execution (`steps=null` in both jobs). New code has not passed hosted CI. No production or persistent database was touched.
 - **Next:** recover GitHub Actions runner provisioning, run complete isolated PostgreSQL restore tests and investigate actual failures; do not treat a static contract assertion as a live recovery certification. Release remains **NO_GO**.
+
+### 2026-11-20 v10.1 unexpected PostgreSQL foreign-key drift regression
+
+- Added a synthetic negative inspector test that reproduces the expected SQLAlchemy foreign-key contract and injects an **extra** constraint into `stores`. The existing comparison must reject unexpected constraints, not only missing ones. Code commit `d0bd2ae27ae844aa6ca509bb529d7b27e7e5f950`.
+- Previous branch HEAD GitHub Actions [run 44812765471](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44812765471) reported `failure`; the new commit has **not** been verified by hosted CI. Investigate job provisioning and execute the full synthetic PostgreSQL suite when runners are available.
+- **Next safe step:** check PostgreSQL restored unique/check constraints against metadata using an isolated inspector fixture, with negative drift tests; do not connect to persistent databases. Release remains **NO_GO**.
