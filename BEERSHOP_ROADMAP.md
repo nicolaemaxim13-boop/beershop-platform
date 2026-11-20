@@ -32,9 +32,9 @@ release remains **NO_GO** independently of tests.
   restore into a brand-new disposable test database -> row counts,
   important invariants and schema checksum verification; negative cases
   for tampering, missing tables, wrong key, already-existing target and
-  recovery failure. Four new synthetic-only tests cover authenticated SQLite restore,
+  recovery failure. Six synthetic-only tests now cover authenticated SQLite restore,
   manifest/row digest and schema checksum, tamper/wrong key, missing table,
-  existing target and non-temp destination. PostgreSQL end-to-end drill
+  existing target and non-temp destination, plus AES-GCM-authenticated but invalid schema manifests and missing-table payloads. PostgreSQL end-to-end drill
   and independent CI validation remain pending. DO NOT use or modify any live service.
 - [ ] **P0/v10.2 existing DB baseline adoption design:** publish
   change/rollback runbook for manual DBA review. Never auto-stamp an
@@ -63,3 +63,9 @@ decision remains `NO_GO`; no production action is implied.
 Task cadence is controlled by the ChatGPT automation, not GitHub Actions.
 Its schedule may evaluate hourly; this does not mean execution runs
 continuously or guarantees code can be changed when an app is unavailable.
+
+### 2026-11-20 staging verification note
+
+- Added two negative v10.1 disaster-recovery tests (commit `c8eab107a0a1bf0bf9599618ee4f723868357d44`): correctly authenticated encrypted archives containing an invalid schema checksum or missing required table must fail before a destination file exists.
+- Current branch-head GitHub Actions run `44765379383` failed with both jobs reporting no steps/logs, so these tests are **not CI-verified**. Do not claim a green CI or promote this branch.
+- **Next safe step:** wire an independently named, disposable local PostgreSQL v10.1 encrypted restore fixture and verify row/manifest/schema invariants plus repeat-restore rejection; do not reuse an existing database or access Neon.
