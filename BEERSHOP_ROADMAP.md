@@ -76,3 +76,9 @@ continuously or guarantees code can be changed when an app is unavailable.
 - GitHub Actions run `44776125698` on the prior head failed before runner assignment (both jobs `steps=null`). The new tests are **not verified by hosted CI**; no green CI claim is made.
 - **Next:** independently run these tests in a disposable environment, then add row-count/schema invariants to the already isolated PostgreSQL v9.6 restore fixture and validate with recovered CI. Never create or reuse a real database.
 - Release remains **NO_GO**, PR Draft, production unchanged.
+
+### 2026-11-20 v10.1 authenticated row-integrity regression
+
+- Added synthetic negative PostgreSQL restore test: re-encrypting a modified store row under the valid password must still fail the application snapshot digest **before any database connection**. Commit `26418c4e4c850e48b56464459210060c4f984f84`.
+- Previous head CI run `44785029755` failed with both jobs reporting `steps=null`, before test execution. This change is **not CI-verified**; keep NO_GO.
+- **Next:** independently execute the PostgreSQL fixture and strengthen successful restore verification with per-table row counts and schema fingerprint, without connecting to any persistent or remote database. CI runner provisioning remains P0.
