@@ -102,3 +102,38 @@ def test_v96_decrypt_then_restore_exactly_once_in_pg_ci(monkeypatch):
     with pytest.raises(UnsafeBackup, match='no tables'):
         rehearsal_restore_encrypted_postgres(
             archive, PASS, main.Base.metadata, url)
+
+
+def test_v101_pg_authenticated_invalid_manifest_fails_before_connect(monkeypatch):
+    """Valid AES-GCM is insufficient: manifest integrity must pass before PG access."""
+    monkeypatch.setenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL', '1')
+    monkeypatch.setenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK',
+                       'ISOLATED_ENCRYPTED_RESTORE_ONLY')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    monkeypatch.delenv('BEERSHOP_PERSISTENT_DATABASE_URL', raising=False)
+    from app.secure_backup_v94 import decrypt_archive
+    payload = json.loads(decrypt_archive(synthetic_encrypted(), PASS))
+    payload['integrity']['schema_sha256'] = 'f' * 64
+    encrypted = encrypt_archive(json.dumps(payload).encode(), PASS)
+    # No PG server is needed: failure must happen before any connection attempt.
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_encrypted_postgres(
+            encrypted, PASS, main.Base.metadata,
+            'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
+
+
+def test_v101_pg_authenticated_missing_table_fails_before_connect(monkeypatch):
+    """Authenticated payload lacking a required table cannot initiate restore."""
+    monkeypatch.setenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL', '1')
+    monkeypatch.setenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK',
+                       'ISOLATED_ENCRYPTED_RESTORE_ONLY')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    monkeypatch.delenv('BEERSHOP_PERSISTENT_DATABASE_URL', raising=False)
+    from app.secure_backup_v94 import decrypt_archive
+    payload = json.loads(decrypt_archive(synthetic_encrypted(), PASS))
+    payload['tables'].pop('stores')
+    encrypted = encrypt_archive(json.dumps(payload).encode(), PASS)
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_encrypted_postgres(
+            encrypted, PASS, main.Base.metadata,
+            'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
