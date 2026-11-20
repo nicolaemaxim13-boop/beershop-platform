@@ -69,3 +69,10 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Added two negative v10.1 disaster-recovery tests (commit `c8eab107a0a1bf0bf9599618ee4f723868357d44`): correctly authenticated encrypted archives containing an invalid schema checksum or missing required table must fail before a destination file exists.
 - Current branch-head GitHub Actions run `44765379383` failed with both jobs reporting no steps/logs, so these tests are **not CI-verified**. Do not claim a green CI or promote this branch.
 - **Next safe step:** wire an independently named, disposable local PostgreSQL v10.1 encrypted restore fixture and verify row/manifest/schema invariants plus repeat-restore rejection; do not reuse an existing database or access Neon.
+
+### 2026-11-20 v10.1 PostgreSQL negative-test increment
+
+- Added two tests to `tests/test_pg_encrypted_restore_v96.py` proving AES-GCM-authenticated but invalid schema digests or missing required tables are rejected **before attempting a PostgreSQL connection**. They use synthetic payloads and a fake loopback URL, never Neon or a real database.
+- GitHub Actions run `44776125698` on the prior head failed before runner assignment (both jobs `steps=null`). The new tests are **not verified by hosted CI**; no green CI claim is made.
+- **Next:** independently run these tests in a disposable environment, then add row-count/schema invariants to the already isolated PostgreSQL v9.6 restore fixture and validate with recovered CI. Never create or reuse a real database.
+- Release remains **NO_GO**, PR Draft, production unchanged.
