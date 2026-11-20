@@ -27,12 +27,15 @@ release remains **NO_GO** independently of tests.
   version states, type/constraint drift, synthetic target guards, NO_GO
   report, negative tests. **Local standalone smoke tests passed (2/2)**
   before upload; full integrated tests pending GitHub runner recovery.
-- [ ] **P0/v10.1 next safe task — disaster recovery rehearsal:** add
+- [ ] **P0/v10.1 disaster recovery rehearsal (SQLite regression tests staged; full CI pending):** add
   deterministic end-to-end synthetic encrypted backup -> authenticated
   restore into a brand-new disposable test database -> row counts,
   important invariants and schema checksum verification; negative cases
   for tampering, missing tables, wrong key, already-existing target and
-  recovery failure. DO NOT use or modify any live service.
+  recovery failure. Four new synthetic-only tests cover authenticated SQLite restore,
+  manifest/row digest and schema checksum, tamper/wrong key, missing table,
+  existing target and non-temp destination. PostgreSQL end-to-end drill
+  and independent CI validation remain pending. DO NOT use or modify any live service.
 - [ ] **P0/v10.2 existing DB baseline adoption design:** publish
   change/rollback runbook for manual DBA review. Never auto-stamp an
   unversioned database, never execute against real databases.
