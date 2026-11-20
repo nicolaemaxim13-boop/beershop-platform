@@ -91,6 +91,14 @@ def test_v96_decrypt_then_restore_exactly_once_in_pg_ci(monkeypatch):
     assert report['mode'] == 'ENCRYPTED_LOCAL_PG_REHEARSAL_ONLY'
     assert report['authenticated_encryption'] == 'AES-256-GCM'
     assert report['rows'] >= 2
+    # Compare every table, including empty ones, against the authenticated
+    # manifest; checking only the store/category sample misses partial restores.
+    from app.secure_backup_v94 import decrypt_archive
+    from app.backup_v9 import _schema_id
+    manifest = json.loads(decrypt_archive(archive, PASS))['integrity']
+    assert manifest['schema_sha256'] == _schema_id(main.Base.metadata)
+    assert report['tables'] == len(main.Base.metadata.tables)
+    assert report['rows'] == sum(manifest['counts'].values())
     assert PASS not in str(report)
     assert 'postgresql://' not in str(report)
 
@@ -98,6 +106,10 @@ def test_v96_decrypt_then_restore_exactly_once_in_pg_ci(monkeypatch):
     with engine.connect() as db:
         assert db.scalar(select(main.Store.name)) == 'SYNTHETIC_ENCRYPTED_V96'
         assert db.scalar(select(func.count()).select_from(main.Category)) == 1
+        for table in main.Base.metadata.sorted_tables:
+            actual = db.scalar(select(func.count()).select_from(table))
+            assert actual == manifest['counts'][table.name], table.name
+        assert set(__import__('sqlalchemy').inspect(db).get_table_names()) == set(manifest['counts'])
     engine.dispose()
     with pytest.raises(UnsafeBackup, match='no tables'):
         rehearsal_restore_encrypted_postgres(
