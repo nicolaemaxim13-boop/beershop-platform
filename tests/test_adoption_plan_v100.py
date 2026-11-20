@@ -105,3 +105,36 @@ def test_v100_remote_and_nonfixture_targets_fail_closed(tmp_path, monkeypatch):
     monkeypatch.setenv('DATABASE_URL', 'postgresql://fake:fake@remote.invalid/live')
     with pytest.raises(UnsafeMigrationPreflight):
         inspect_isolated_existing_plan(url, main.Base.metadata)
+
+
+def test_v100_cli_is_readonly_no_go_and_never_prints_db_url(tmp_path, monkeypatch):
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    url, database = _setup(tmp_path, monkeypatch)
+    env = dict(os.environ)
+    env['BEERSHOP_V96_PREFLIGHT_ACK'] = 'ISOLATED_READONLY_PREFLIGHT'
+    env['BEERSHOP_V96_PREFLIGHT_URL'] = url
+    env.pop('DATABASE_URL', None)
+    env.pop('BEERSHOP_PERSISTENT_DATABASE_URL', None)
+    root = Path(__file__).resolve().parents[1]
+    cmd = [sys.executable, 'scripts/adoption_plan_v100.py']
+    run = subprocess.run(cmd, cwd=root, env=env, capture_output=True,
+                         text=True, timeout=60, check=False)
+    assert run.returncode == 3, run.stderr
+    result = json.loads(run.stdout)
+    assert result['decision'] == 'NO_GO'
+    assert result['rows_exposed'] == 0
+    assert 'V100_FAKE_BUYER_PRIVATE_VALUE' not in run.stdout + run.stderr
+    assert str(database) not in run.stdout + run.stderr
+    assert url not in run.stdout + run.stderr
+
+    env['DATABASE_URL'] = 'postgresql://private:secret@remote.invalid/live'
+    denied = subprocess.run(cmd, cwd=root, env=env, capture_output=True,
+                            text=True, timeout=60, check=False)
+    assert denied.returncode == 2
+    assert denied.stdout == ''
+    assert 'secret' not in denied.stderr
