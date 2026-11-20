@@ -91,3 +91,9 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Last checked CI for previous branch head: [run 44794148549](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44794148549) failed before runner assignment; both jobs have `steps=null` and no logs. **New changes not CI-verified.**
 - **Next:** once GitHub Actions runner provisioning is restored, run the complete disposable PostgreSQL restore fixture and inspect any actual assertion failures; separately consider read-only PostgreSQL schema/constraint fingerprint checks. Do not change live databases or weaken checks.
 - Release remains **NO_GO**; Draft PR only.
+
+### 2026-11-20 v10.1 restored PostgreSQL foreign-key contract
+
+- Added a read-only foreign-key metadata comparison after the existing disposable PostgreSQL encrypted restore test: constrained columns, referenced tables and referenced columns must match SQLAlchemy metadata for every table. Negative unit test simulates missing foreign keys and requires a hard failure. Code commit `9c69b287ff7e2bf6c57a2f235a3671685e2080d0`.
+- Prior branch HEAD GitHub Actions [run 44804450141](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44804450141) failed before test execution (`steps=null` in both jobs). New code has not passed hosted CI. No production or persistent database was touched.
+- **Next:** recover GitHub Actions runner provisioning, run complete isolated PostgreSQL restore tests and investigate actual failures; do not treat a static contract assertion as a live recovery certification. Release remains **NO_GO**.
