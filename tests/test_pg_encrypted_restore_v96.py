@@ -306,7 +306,7 @@ def _assert_check_constraint_contract(metadata, inspector):
     from sqlalchemy import CheckConstraint
 
     def normalized(sql):
-        return re.sub(r"\\s+", " ", str(sql).strip()).lower()
+        return re.sub(r"\s+", " ", str(sql).strip()).lower()
 
     for table in metadata.sorted_tables:
         expected = {
@@ -361,6 +361,21 @@ def test_v101_check_contract_accepts_whitespace_only_variation():
 
     class EquivalentCheckInspector:
         def get_check_constraints(self, table_name):
-            return [{"sqltext": "  QUANTITY   >=   0  "}]
+            return [{"sqltext": "  QUANTITY\t  >=\n  0  "}]
 
     _assert_check_constraint_contract(metadata, EquivalentCheckInspector())
+
+
+def test_v101_check_contract_rejects_changed_operator():
+    """Whitespace normalization must never hide a changed CHECK operator."""
+    from sqlalchemy import MetaData, Table, Column, Integer, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("quantity", Integer),
+          CheckConstraint("quantity >= 0"))
+
+    class ChangedOperatorInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "quantity > 0"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ChangedOperatorInspector())
