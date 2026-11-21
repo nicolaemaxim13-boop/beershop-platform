@@ -466,3 +466,18 @@ def test_v101_check_contract_rejects_changed_escaped_quote_literal():
 
     with pytest.raises(AssertionError, match="Check-constraint schema drift"):
         _assert_check_constraint_contract(metadata, ChangedLiteralInspector())
+
+
+def test_v101_check_contract_rejects_changed_trailing_space_in_literal():
+    """A trailing space inside a SQL literal is data, not formatting."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'PAID '"))
+
+    class TrimmedLiteralInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'PAID'"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, TrimmedLiteralInspector())
