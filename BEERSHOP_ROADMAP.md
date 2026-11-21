@@ -145,3 +145,9 @@ continuously or guarantees code can be changed when an app is unavailable.
 - **P0 blocker:** investigate repository/organization Actions settings, runner availability, spending limits or account-level restrictions through an authorized owner; do not weaken workflows or bypass checks. The existing workflow requests `ubuntu-latest` for both jobs.
 - **Next code task after runner recovery:** execute the isolated PostgreSQL encrypted restore suite against a disposable loopback PostgreSQL instance, inspect actual CHECK-expression dialect rewrites, then add targeted negative regression tests for any confirmed discrepancy. No further unverified schema-check code should be stacked while runner provisioning remains unresolved.
 - **NO_GO**. Draft staging only; no main, production, Render, Neon, secrets, customer data or payments touched.
+
+### 2026-11-21 CI recheck — runner provisioning still blocked
+
+- Checked the next GitHub Actions run [44871913066](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44871913066) for staging commit `517dd3961d800c262e733fa94ca59fad0489a13b`: `failure`; both `test` and `postgres` jobs have `steps=null`, no executable test steps or usable job logs.
+- No further unverified database-restore code added. **Blocker remains external runner provisioning**; account/repository Actions permissions, usage and billing limits need authorized owner investigation, without purchasing services or disabling required checks.
+- **Next:** after runners execute steps, run the existing disposable PostgreSQL restore integration and inspect any actual `CHECK` expression mismatch. Keep PR Draft and release **NO_GO**.
