@@ -318,7 +318,7 @@ def _assert_check_constraint_contract(metadata, inspector):
                 outside.append(char)
                 index += 1
                 continue
-            chunks.append(re.sub(r"\\s+", " ", "".join(outside)))
+            chunks.append(re.sub(r"\s+", " ", "".join(outside)))
             outside = []
             start = index
             index += 1
@@ -333,7 +333,7 @@ def _assert_check_constraint_contract(metadata, inspector):
             else:
                 raise AssertionError("Unterminated CHECK string literal")
             chunks.append(source[start:index])
-        chunks.append(re.sub(r"\\s+", " ", "".join(outside)))
+        chunks.append(re.sub(r"\s+", " ", "".join(outside)))
         return "".join(chunks)
 
     for table in metadata.sorted_tables:
@@ -451,3 +451,18 @@ def test_v101_check_contract_rejects_unterminated_literal():
 
     with pytest.raises(AssertionError, match="Unterminated CHECK string literal"):
         _assert_check_constraint_contract(metadata, MalformedInspector())
+
+
+def test_v101_check_contract_rejects_changed_escaped_quote_literal():
+    """Escaped SQL single quotes are part of the CHECK string value."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'O''BRIEN'"))
+
+    class ChangedLiteralInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'OBRIEN'"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ChangedLiteralInspector())
