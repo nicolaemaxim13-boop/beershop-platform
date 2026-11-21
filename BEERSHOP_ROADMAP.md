@@ -151,3 +151,9 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Checked the next GitHub Actions run [44871913066](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44871913066) for staging commit `517dd3961d800c262e733fa94ca59fad0489a13b`: `failure`; both `test` and `postgres` jobs have `steps=null`, no executable test steps or usable job logs.
 - No further unverified database-restore code added. **Blocker remains external runner provisioning**; account/repository Actions permissions, usage and billing limits need authorized owner investigation, without purchasing services or disabling required checks.
 - **Next:** after runners execute steps, run the existing disposable PostgreSQL restore integration and inspect any actual `CHECK` expression mismatch. Keep PR Draft and release **NO_GO**.
+
+### 2026-11-21 CI recheck — run 44876643098
+
+- Checked current Draft PR #17 HEAD `55c2cbe3a404281b6d1fcfc3eb51829fc95cc45e`: [GitHub Actions 44876643098](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44876643098) completed with `failure`. Both `postgres` and `test` jobs returned `steps=null` and `logs_url=null`; no tests executed.
+- **P0 external blocker remains:** runner provisioning cannot be diagnosed from the available job data. An authorized owner must review Actions availability, account/repository policy and usage limits; do not change billing, bypass CI, or add more unverified database code.
+- **Next:** after runners execute steps, run existing disposable loopback PostgreSQL restore tests; add negative regressions only for confirmed defects. Draft PR and release remain **NO_GO**.
