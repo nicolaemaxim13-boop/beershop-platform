@@ -118,3 +118,10 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Fixed PostgreSQL restore CHECK comparison to preserve case, because lowercasing entire SQL expressions can conceal a changed case-sensitive string literal (e.g. 'PAID' vs 'paid'). Whitespace-only normalization remains; identifier case rewrites fail closed for manual review. Added negative synthetic test for changed literal case and adjusted whitespace-only positive fixture. Code commit `902cfe1bcfbffbf24bde987b537c97d7683d7773`.
 - At start of this run, Actions [44845278302](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44845278302) on previous HEAD failed with both jobs `steps=null`, no runner logs. New tests are NOT CI-verified. Do not bypass checks.
 - **Next:** restore hosted runner provisioning, execute isolated PostgreSQL integration, then assess actual PostgreSQL CHECK expression rewrites. Keep Draft PR and release **NO_GO**.
+
+### 2026-11-21 v10.1 CHECK quoted-literal whitespace safety
+
+- Corrected the synthetic PostgreSQL restore CHECK comparator: it now normalizes formatting whitespace only outside single-quoted SQL string literals; doubled single quotes remain inside the literal. An unterminated literal fails closed.
+- Added negative tests for changed whitespace *inside* a quoted value and malformed quoted SQL. Code commit [d6bcca7](https://github.com/nicolaemaxim13-boop/beershop-platform/commit/d6bcca7beac3872058bc2f68db46b9aece419d7a).
+- Current HEAD's preceding Actions run [44851499517](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44851499517) failed before runner assignment: both jobs have no steps/logs. This new change is **not CI-verified**.
+- **Next:** restore runner provisioning and execute disposable PostgreSQL restore integration; investigate PostgreSQL CHECK expression rewriting without relaxing fail-closed comparison. **NO_GO**, Draft PR only.
