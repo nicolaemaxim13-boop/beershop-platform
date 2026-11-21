@@ -163,3 +163,9 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Verified Draft PR #17 remains open at staging HEAD `0beb2788a945b38df0e80e75e4ff93eed7b99119`; [Actions run 44881423632](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44881423632) is `failure`. Both `postgres` and `test` jobs have `steps=null` and `logs_url=null`: no tests or encrypted restore were executed.
 - **P0 blocker persists:** hosted runner provisioning is unresolved. Do not claim test failures, bypass required CI, change billing, or stack unverified database changes. Authorized owner should inspect Actions availability/usage/policy; exact cause is unconfirmed.
 - **Next:** once a runner executes steps, validate existing disposable loopback PostgreSQL encrypted restore and CHECK drift tests, adding negative regressions only for observed defects. **NO_GO**; Draft PR only.
+
+### 2026-11-21 CI provisioning verification — run 44885559993
+
+- Draft PR #17 staging HEAD `dedacd510cdf110f8196ac453eb9047faa42466a` produced [Actions run 44885559993](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44885559993), `failure`. Both `postgres` (job 136789963573) and `test` (job 136789963758) ended with `steps=null`, before any test steps could be verified.
+- **P0 remains blocked externally:** repository/account Actions runner provisioning must be diagnosed by an authorized owner (availability, policy, usage); the job data does not establish the precise cause. No new code or negative tests added while execution is unavailable; existing regressions remain unverified.
+- **Next:** once runner jobs actually execute, run the existing disposable PostgreSQL encrypted restore and CHECK drift negative tests; only patch defects demonstrated by results. **NO_GO**; Draft staging only, no production/main/Render/Neon changes.
