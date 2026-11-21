@@ -306,7 +306,35 @@ def _assert_check_constraint_contract(metadata, inspector):
     from sqlalchemy import CheckConstraint
 
     def normalized(sql):
-        return re.sub(r"\s+", " ", str(sql).strip())
+        # Whitespace inside SQL quoted literals is data, not formatting.
+        # Keep it byte-for-byte; fail closed on malformed quoted strings.
+        source = str(sql).strip()
+        chunks = []
+        outside = []
+        index = 0
+        while index < len(source):
+            char = source[index]
+            if char != "'":
+                outside.append(char)
+                index += 1
+                continue
+            chunks.append(re.sub(r"\\s+", " ", "".join(outside)))
+            outside = []
+            start = index
+            index += 1
+            while index < len(source):
+                if source[index] == "'":
+                    if index + 1 < len(source) and source[index + 1] == "'":
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            else:
+                raise AssertionError("Unterminated CHECK string literal")
+            chunks.append(source[start:index])
+        chunks.append(re.sub(r"\\s+", " ", "".join(outside)))
+        return "".join(chunks)
 
     for table in metadata.sorted_tables:
         expected = {
@@ -394,3 +422,32 @@ def test_v101_check_contract_rejects_changed_string_literal_case():
 
     with pytest.raises(AssertionError, match="Check-constraint schema drift"):
         _assert_check_constraint_contract(metadata, ChangedLiteralInspector())
+
+def test_v101_check_contract_rejects_changed_whitespace_inside_literal():
+    """A whitespace edit inside a quoted CHECK value changes its semantics."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'PAID  NOW'"))
+
+    class ChangedLiteralInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'PAID NOW'"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ChangedLiteralInspector())
+
+
+def test_v101_check_contract_rejects_unterminated_literal():
+    """Malformed inspector CHECK SQL must fail closed."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'PAID'"))
+
+    class MalformedInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'PAID"}]
+
+    with pytest.raises(AssertionError, match="Unterminated CHECK string literal"):
+        _assert_check_constraint_contract(metadata, MalformedInspector())
