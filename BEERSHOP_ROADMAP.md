@@ -125,3 +125,10 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Added negative tests for changed whitespace *inside* a quoted value and malformed quoted SQL. Code commit [d6bcca7](https://github.com/nicolaemaxim13-boop/beershop-platform/commit/d6bcca7beac3872058bc2f68db46b9aece419d7a).
 - Current HEAD's preceding Actions run [44851499517](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44851499517) failed before runner assignment: both jobs have no steps/logs. This new change is **not CI-verified**.
 - **Next:** restore runner provisioning and execute disposable PostgreSQL restore integration; investigate PostgreSQL CHECK expression rewriting without relaxing fail-closed comparison. **NO_GO**, Draft PR only.
+
+### 2026-11-21 v10.1 CHECK whitespace regression (staging)
+
+- Corrected two remaining literal-backslash regexes `r"\\\\s+"` to whitespace regexes `r"\\s+"` in the quoted-literal-aware CHECK comparison. Earlier change had not actually fixed these occurrences; now formatting whitespace outside SQL string literals is normalized as intended, while literal contents remain unchanged.
+- Added a negative synthetic regression for escaped SQL quotes (`'O''BRIEN'` versus `'OBRIEN'`). Code commit [bfedd024](https://github.com/nicolaemaxim13-boop/beershop-platform/commit/bfedd02484483b936d29a0120976d23138e96d26).
+- Pre-change HEAD Actions [44857313586](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44857313586) failed. New commit has **no confirmed green CI**; no integration/production certification.
+- **Next:** inspect the current HEAD CI runner/job provisioning; execute disposable PostgreSQL restore and inspect dialect-specific CHECK rewrites when CI is available. **NO_GO**, Draft PR, staging only.
