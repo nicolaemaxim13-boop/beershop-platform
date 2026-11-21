@@ -306,7 +306,7 @@ def _assert_check_constraint_contract(metadata, inspector):
     from sqlalchemy import CheckConstraint
 
     def normalized(sql):
-        return re.sub(r"\s+", " ", str(sql).strip()).lower()
+        return re.sub(r"\s+", " ", str(sql).strip())
 
     for table in metadata.sorted_tables:
         expected = {
@@ -361,7 +361,7 @@ def test_v101_check_contract_accepts_whitespace_only_variation():
 
     class EquivalentCheckInspector:
         def get_check_constraints(self, table_name):
-            return [{"sqltext": "  QUANTITY\t  >=\n  0  "}]
+            return [{"sqltext": "  quantity\t  >=\n  0  "}]
 
     _assert_check_constraint_contract(metadata, EquivalentCheckInspector())
 
@@ -379,3 +379,18 @@ def test_v101_check_contract_rejects_changed_operator():
 
     with pytest.raises(AssertionError, match="Check-constraint schema drift"):
         _assert_check_constraint_contract(metadata, ChangedOperatorInspector())
+
+
+def test_v101_check_contract_rejects_changed_string_literal_case():
+    """Case-sensitive CHECK literals must not be silently normalized away."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'PAID'"))
+
+    class ChangedLiteralInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'paid'"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ChangedLiteralInspector())
