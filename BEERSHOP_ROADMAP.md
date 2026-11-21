@@ -132,3 +132,9 @@ continuously or guarantees code can be changed when an app is unavailable.
 - Added a negative synthetic regression for escaped SQL quotes (`'O''BRIEN'` versus `'OBRIEN'`). Code commit [bfedd024](https://github.com/nicolaemaxim13-boop/beershop-platform/commit/bfedd02484483b936d29a0120976d23138e96d26).
 - Pre-change HEAD Actions [44857313586](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44857313586) failed. New commit has **no confirmed green CI**; no integration/production certification.
 - **Next:** inspect the current HEAD CI runner/job provisioning; execute disposable PostgreSQL restore and inspect dialect-specific CHECK rewrites when CI is available. **NO_GO**, Draft PR, staging only.
+
+### 2026-11-21 v10.1 CHECK literal trailing-space regression (staging)
+
+- Added an isolated negative test proving that a trailing space inside a SQL CHECK string literal cannot be trimmed during schema comparison. Synthetic metadata/inspector only; no database connection. Code commit [fc2b96e](https://github.com/nicolaemaxim13-boop/beershop-platform/commit/fc2b96e708dce53e7f09435fea167ca25074f634).
+- Pre-change HEAD GitHub Actions [44861996584](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44861996584) failed: postgres and test jobs both reported no steps, so no test execution was confirmed. New test is NOT hosted-CI verified.
+- **Next:** resolve GitHub Actions runner provisioning (repository/account settings require owner investigation), then execute disposable PostgreSQL restore integration and inspect CHECK expression rewriting. **NO_GO**; no production deployment or merge.
