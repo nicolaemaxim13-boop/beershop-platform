@@ -1,0 +1,171 @@
+# BeerShop — autonomous staging engineering queue
+
+**Scope:** `nicolaemaxim13-boop/beershop-platform`, existing Draft PR #17,
+`staging/beershop-v9-sales-readiness-audit`. This file is the *task queue*,
+NOT a license to deploy to `main`, production Render/Neon, payments or
+any real customer data. No paid service or KeyCRM is needed.
+
+At each automated review: read the latest branch SHA, PR and CI status,
+select **one safe step** from the queue, implement or report the blocker,
+write tests, update the task status and link the commit. Do not say CI
+passed if GitHub runners could not start. Never auto-merge. Production
+release remains **NO_GO** independently of tests.
+
+## Current highest-priority blockers
+
+- [ ] **P0/CI runner provisioning:** GitHub Actions jobs started failing
+  before runner assignment from Nov 16 onward (empty runner name, zero
+  steps, no job logs). Owner must inspect free GitHub Actions usage /
+  repository policy or request GitHub Support. Do **not** turn on paid
+  services or disable checks. When available, rerun existing full CI;
+  only then mark P1/v10 changes CI-verified.
+- [x] **P0/v9.9 baseline DDL frozen:** 24-table Alembic initial revision,
+  checksummed SQLite/PostgreSQL DDL; still fixture-only.
+- [x] **P0/v9.9 isolated key rotation:** AES-GCM encrypted synthetic archive
+  rotation; original remains, no production secrets touched.
+- [x] **P0/v10.0 read-only existing-schema adoption planning:** indexes,
+  version states, type/constraint drift, synthetic target guards, NO_GO
+  report, negative tests. **Local standalone smoke tests passed (2/2)**
+  before upload; full integrated tests pending GitHub runner recovery.
+- [ ] **P0/v10.1 disaster recovery rehearsal (SQLite regression tests staged; full CI pending):** add
+  deterministic end-to-end synthetic encrypted backup -> authenticated
+  restore into a brand-new disposable test database -> row counts,
+  important invariants and schema checksum verification; negative cases
+  for tampering, missing tables, wrong key, already-existing target and
+  recovery failure. Six synthetic-only tests now cover authenticated SQLite restore,
+  manifest/row digest and schema checksum, tamper/wrong key, missing table,
+  existing target and non-temp destination, plus AES-GCM-authenticated but invalid schema manifests and missing-table payloads. PostgreSQL end-to-end drill
+  and independent CI validation remain pending. DO NOT use or modify any live service.
+- [ ] **P0/v10.2 existing DB baseline adoption design:** publish
+  change/rollback runbook for manual DBA review. Never auto-stamp an
+  unversioned database, never execute against real databases.
+- [ ] **P0/v10.3 static secure export audit:** identify every legacy
+  plaintext HTTP export path and document safe opt-out/fail-closed
+  staging migration, with tests; do not alter production behavior without
+  separate explicit permission.
+- [ ] **P0/operator security review:** independent tests for MFA,
+  sessions/revocation, ingress trust, rate limiting, backups, legal and
+  payment controls. Requires non-code evidence, not automatically cleared.
+- [ ] **P1/mobile checkout and anonymous funnel:** newest browser +
+  rapid-submit tests need runner verification; recheck server quote and
+  synthetic order flow. No live payment service.
+- [ ] **P1/Ukraine merchant release checklist:** identity, inventory,
+  UAH FX rounding, IBAN ownership/reconciliation, receipts, returns,
+  privacy, consent and real user disclosures. Owner/legal review needed.
+
+## Completion criteria
+
+Each checked engineering item should have a reproducible diff, negative
+tests and evidence. **Working code, green CI and a security audit are
+three different things**. Without live-independent proof, the release
+decision remains `NO_GO`; no production action is implied.
+
+Task cadence is controlled by the ChatGPT automation, not GitHub Actions.
+Its schedule may evaluate hourly; this does not mean execution runs
+continuously or guarantees code can be changed when an app is unavailable.
+
+### 2026-11-20 staging verification note
+
+- Added two negative v10.1 disaster-recovery tests (commit `c8eab107a0a1bf0bf9599618ee4f723868357d44`): correctly authenticated encrypted archives containing an invalid schema checksum or missing required table must fail before a destination file exists.
+- Current branch-head GitHub Actions run `44765379383` failed with both jobs reporting no steps/logs, so these tests are **not CI-verified**. Do not claim a green CI or promote this branch.
+- **Next safe step:** wire an independently named, disposable local PostgreSQL v10.1 encrypted restore fixture and verify row/manifest/schema invariants plus repeat-restore rejection; do not reuse an existing database or access Neon.
+
+### 2026-11-20 v10.1 PostgreSQL negative-test increment
+
+- Added two tests to `tests/test_pg_encrypted_restore_v96.py` proving AES-GCM-authenticated but invalid schema digests or missing required tables are rejected **before attempting a PostgreSQL connection**. They use synthetic payloads and a fake loopback URL, never Neon or a real database.
+- GitHub Actions run `44776125698` on the prior head failed before runner assignment (both jobs `steps=null`). The new tests are **not verified by hosted CI**; no green CI claim is made.
+- **Next:** independently run these tests in a disposable environment, then add row-count/schema invariants to the already isolated PostgreSQL v9.6 restore fixture and validate with recovered CI. Never create or reuse a real database.
+- Release remains **NO_GO**, PR Draft, production unchanged.
+
+### 2026-11-20 v10.1 authenticated row-integrity regression
+
+- Added synthetic negative PostgreSQL restore test: re-encrypting a modified store row under the valid password must still fail the application snapshot digest **before any database connection**. Commit `26418c4e4c850e48b56464459210060c4f984f84`.
+- Previous head CI run `44785029755` failed with both jobs reporting `steps=null`, before test execution. This change is **not CI-verified**; keep NO_GO.
+- **Next:** independently execute the PostgreSQL fixture and strengthen successful restore verification with per-table row counts and schema fingerprint, without connecting to any persistent or remote database. CI runner provisioning remains P0.
+
+### 2026-11-20 v10.1 PostgreSQL full-table verification increment
+
+- Expanded the existing **opt-in disposable PostgreSQL restore** test to compare **every table's actual restored row count** with the AES-GCM-authenticated snapshot manifest, including empty tables. It also asserts the full table-name set, total rows and expected metadata schema digest. This is fixture verification, not a production restore certification.
+- Added a negative test: a re-encrypted archive with forged per-table counts must be rejected during manifest verification **before a database connection**.
+- Commits: `ea20069918a4ad198b14eee7901c79984ebae4d6`, `6cc460b21186e13f4df16165d96317258b298a50`.
+- Last checked CI for previous branch head: [run 44794148549](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44794148549) failed before runner assignment; both jobs have `steps=null` and no logs. **New changes not CI-verified.**
+- **Next:** once GitHub Actions runner provisioning is restored, run the complete disposable PostgreSQL restore fixture and inspect any actual assertion failures; separately consider read-only PostgreSQL schema/constraint fingerprint checks. Do not change live databases or weaken checks.
+- Release remains **NO_GO**; Draft PR only.
+
+### 2026-11-20 v10.1 restored PostgreSQL foreign-key contract
+
+- Added a read-only foreign-key metadata comparison after the existing disposable PostgreSQL encrypted restore test: constrained columns, referenced tables and referenced columns must match SQLAlchemy metadata for every table. Negative unit test simulates missing foreign keys and requires a hard failure. Code commit `9c69b287ff7e2bf6c57a2f235a3671685e2080d0`.
+- Prior branch HEAD GitHub Actions [run 44804450141](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44804450141) failed before test execution (`steps=null` in both jobs). New code has not passed hosted CI. No production or persistent database was touched.
+- **Next:** recover GitHub Actions runner provisioning, run complete isolated PostgreSQL restore tests and investigate actual failures; do not treat a static contract assertion as a live recovery certification. Release remains **NO_GO**.
+
+### 2026-11-20 v10.1 unexpected PostgreSQL foreign-key drift regression
+
+- Added a synthetic negative inspector test that reproduces the expected SQLAlchemy foreign-key contract and injects an **extra** constraint into `stores`. The existing comparison must reject unexpected constraints, not only missing ones. Code commit `d0bd2ae27ae844aa6ca509bb529d7b27e7e5f950`.
+- Previous branch HEAD GitHub Actions [run 44812765471](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44812765471) reported `failure`; the new commit has **not** been verified by hosted CI. Investigate job provisioning and execute the full synthetic PostgreSQL suite when runners are available.
+- **Next safe step:** check PostgreSQL restored unique/check constraints against metadata using an isolated inspector fixture, with negative drift tests; do not connect to persistent databases. Release remains **NO_GO**.
+
+- [x] **v10.1 PostgreSQL UNIQUE constraint drift test (2026-11-20):** isolated restore integration now compares PostgreSQL UNIQUE column tuples with SQLAlchemy metadata and adds missing/extra constraint negative cases. Commit `2aaf36b82faeb6f9004088388df849a87eef74a6`. CI not yet verified: last checked HEAD `c19ed384` failed in GitHub Actions run `44822408000`. Next: add CHECK constraint comparison and synthetic negative tests; confirm the actual PostgreSQL restore test once runners provision. Release remains **NO_GO**.
+
+- [x] **v10.1 PostgreSQL CHECK drift regression (2026-11-21):** added strict comparison of explicit CHECK expressions after disposable PostgreSQL encrypted restore, plus synthetic negative tests for missing/extra constraints and a whitespace-only positive case. Code commit `5da1d51d1201997b7271df6d162523389c339c3a`. The comparison intentionally fails closed on PostgreSQL expression rewrites pending manual review. Previous HEAD CI run [44830883591](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44830883591) failed; new code is NOT hosted-CI verified. **Next:** recover runner provisioning and run actual PostgreSQL integration; inspect CHECK expression normalization against PostgreSQL output before treating restore checks as passing. NO_GO; no production changes.
+
+### 2026-11-21 v10.1 CHECK normalization regression fix
+
+- Fixed a concrete test-helper bug: `r"\\s+"` matched a literal backslash plus `s` instead of whitespace. The inspector CHECK comparison now uses `r"\s+"` so multiple spaces, tabs and line breaks normalize as documented. Strengthened the positive synthetic test with mixed whitespace and added a negative test for a changed comparison operator. Code commit `357088a44edb9e2a32b74637b53a18d3cf909fb4`.
+- Previous HEAD Actions run [44838571630](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44838571630) failed in both jobs; no verified passing CI for this fix. **Next:** check new run jobs and execute PostgreSQL restore on a disposable DB once runner provisioning works; inspect PostgreSQL expression rewrites without relaxing fail-closed comparisons. Production release remains **NO_GO**.
+
+### 2026-11-21 v10.1 CHECK literal case safety
+
+- Fixed PostgreSQL restore CHECK comparison to preserve case, because lowercasing entire SQL expressions can conceal a changed case-sensitive string literal (e.g. 'PAID' vs 'paid'). Whitespace-only normalization remains; identifier case rewrites fail closed for manual review. Added negative synthetic test for changed literal case and adjusted whitespace-only positive fixture. Code commit `902cfe1bcfbffbf24bde987b537c97d7683d7773`.
+- At start of this run, Actions [44845278302](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44845278302) on previous HEAD failed with both jobs `steps=null`, no runner logs. New tests are NOT CI-verified. Do not bypass checks.
+- **Next:** restore hosted runner provisioning, execute isolated PostgreSQL integration, then assess actual PostgreSQL CHECK expression rewrites. Keep Draft PR and release **NO_GO**.
+
+### 2026-11-21 v10.1 CHECK quoted-literal whitespace safety
+
+- Corrected the synthetic PostgreSQL restore CHECK comparator: it now normalizes formatting whitespace only outside single-quoted SQL string literals; doubled single quotes remain inside the literal. An unterminated literal fails closed.
+- Added negative tests for changed whitespace *inside* a quoted value and malformed quoted SQL. Code commit [d6bcca7](https://github.com/nicolaemaxim13-boop/beershop-platform/commit/d6bcca7beac3872058bc2f68db46b9aece419d7a).
+- Current HEAD's preceding Actions run [44851499517](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44851499517) failed before runner assignment: both jobs have no steps/logs. This new change is **not CI-verified**.
+- **Next:** restore runner provisioning and execute disposable PostgreSQL restore integration; investigate PostgreSQL CHECK expression rewriting without relaxing fail-closed comparison. **NO_GO**, Draft PR only.
+
+### 2026-11-21 v10.1 CHECK whitespace regression (staging)
+
+- Corrected two remaining literal-backslash regexes `r"\\\\s+"` to whitespace regexes `r"\\s+"` in the quoted-literal-aware CHECK comparison. Earlier change had not actually fixed these occurrences; now formatting whitespace outside SQL string literals is normalized as intended, while literal contents remain unchanged.
+- Added a negative synthetic regression for escaped SQL quotes (`'O''BRIEN'` versus `'OBRIEN'`). Code commit [bfedd024](https://github.com/nicolaemaxim13-boop/beershop-platform/commit/bfedd02484483b936d29a0120976d23138e96d26).
+- Pre-change HEAD Actions [44857313586](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44857313586) failed. New commit has **no confirmed green CI**; no integration/production certification.
+- **Next:** inspect the current HEAD CI runner/job provisioning; execute disposable PostgreSQL restore and inspect dialect-specific CHECK rewrites when CI is available. **NO_GO**, Draft PR, staging only.
+
+### 2026-11-21 v10.1 CHECK literal trailing-space regression (staging)
+
+- Added an isolated negative test proving that a trailing space inside a SQL CHECK string literal cannot be trimmed during schema comparison. Synthetic metadata/inspector only; no database connection. Code commit [fc2b96e](https://github.com/nicolaemaxim13-boop/beershop-platform/commit/fc2b96e708dce53e7f09435fea167ca25074f634).
+- Pre-change HEAD GitHub Actions [44861996584](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44861996584) failed: postgres and test jobs both reported no steps, so no test execution was confirmed. New test is NOT hosted-CI verified.
+- **Next:** resolve GitHub Actions runner provisioning (repository/account settings require owner investigation), then execute disposable PostgreSQL restore integration and inspect CHECK expression rewriting. **NO_GO**; no production deployment or merge.
+
+### 2026-11-21 v10.1 CI provisioning gate (read-only investigation)
+
+- Inspected Draft PR #17 at HEAD `581af684a5f6ed4886b2b0ef2d8fa5514da186bb` and its [Actions run 44867048265](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44867048265): **failure**, both `test` and `postgres` jobs completed with `steps=null`. No test steps or PostgreSQL restore were executed. This is not evidence of a test failure or success; the precise provisioning cause is not exposed by job-step data.
+- **P0 blocker:** investigate repository/organization Actions settings, runner availability, spending limits or account-level restrictions through an authorized owner; do not weaken workflows or bypass checks. The existing workflow requests `ubuntu-latest` for both jobs.
+- **Next code task after runner recovery:** execute the isolated PostgreSQL encrypted restore suite against a disposable loopback PostgreSQL instance, inspect actual CHECK-expression dialect rewrites, then add targeted negative regression tests for any confirmed discrepancy. No further unverified schema-check code should be stacked while runner provisioning remains unresolved.
+- **NO_GO**. Draft staging only; no main, production, Render, Neon, secrets, customer data or payments touched.
+
+### 2026-11-21 CI recheck — runner provisioning still blocked
+
+- Checked the next GitHub Actions run [44871913066](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44871913066) for staging commit `517dd3961d800c262e733fa94ca59fad0489a13b`: `failure`; both `test` and `postgres` jobs have `steps=null`, no executable test steps or usable job logs.
+- No further unverified database-restore code added. **Blocker remains external runner provisioning**; account/repository Actions permissions, usage and billing limits need authorized owner investigation, without purchasing services or disabling required checks.
+- **Next:** after runners execute steps, run the existing disposable PostgreSQL restore integration and inspect any actual `CHECK` expression mismatch. Keep PR Draft and release **NO_GO**.
+
+### 2026-11-21 CI recheck — run 44876643098
+
+- Checked current Draft PR #17 HEAD `55c2cbe3a404281b6d1fcfc3eb51829fc95cc45e`: [GitHub Actions 44876643098](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44876643098) completed with `failure`. Both `postgres` and `test` jobs returned `steps=null` and `logs_url=null`; no tests executed.
+- **P0 external blocker remains:** runner provisioning cannot be diagnosed from the available job data. An authorized owner must review Actions availability, account/repository policy and usage limits; do not change billing, bypass CI, or add more unverified database code.
+- **Next:** after runners execute steps, run existing disposable loopback PostgreSQL restore tests; add negative regressions only for confirmed defects. Draft PR and release remain **NO_GO**.
+
+### 2026-11-21 CI provisioning recheck — run 44881423632
+
+- Verified Draft PR #17 remains open at staging HEAD `0beb2788a945b38df0e80e75e4ff93eed7b99119`; [Actions run 44881423632](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44881423632) is `failure`. Both `postgres` and `test` jobs have `steps=null` and `logs_url=null`: no tests or encrypted restore were executed.
+- **P0 blocker persists:** hosted runner provisioning is unresolved. Do not claim test failures, bypass required CI, change billing, or stack unverified database changes. Authorized owner should inspect Actions availability/usage/policy; exact cause is unconfirmed.
+- **Next:** once a runner executes steps, validate existing disposable loopback PostgreSQL encrypted restore and CHECK drift tests, adding negative regressions only for observed defects. **NO_GO**; Draft PR only.
+
+### 2026-11-21 CI provisioning verification — run 44885559993
+
+- Draft PR #17 staging HEAD `dedacd510cdf110f8196ac453eb9047faa42466a` produced [Actions run 44885559993](https://github.com/nicolaemaxim13-boop/beershop-platform/actions/runs/44885559993), `failure`. Both `postgres` (job 136789963573) and `test` (job 136789963758) ended with `steps=null`, before any test steps could be verified.
+- **P0 remains blocked externally:** repository/account Actions runner provisioning must be diagnosed by an authorized owner (availability, policy, usage); the job data does not establish the precise cause. No new code or negative tests added while execution is unavailable; existing regressions remain unverified.
+- **Next:** once runner jobs actually execute, run the existing disposable PostgreSQL encrypted restore and CHECK drift negative tests; only patch defects demonstrated by results. **NO_GO**; Draft staging only, no production/main/Render/Neon changes.

@@ -1,0 +1,483 @@
+"""v9.6: decrypt only in memory; restore only into empty disposable PostgreSQL."""
+import os
+import json
+
+import pytest
+from sqlalchemy import create_engine, select, func
+
+from app import main
+from app.backup_v9 import add_integrity, UnsafeBackup, verify_snapshot
+from app.secure_backup_v94 import encrypt_archive, UnsafeEncryptedBackup
+from app.pg_encrypted_restore_v96 import rehearsal_restore_encrypted_postgres
+from app.pg_rehearsal_v94 import validate_local_rehearsal_target
+
+PASS = 'Synthetic-only-v96-encrypted-PG-rehearsal-password'
+
+
+def synthetic_encrypted():
+    engine = create_engine('sqlite:///:memory:')
+    main.Base.metadata.create_all(engine)
+    with engine.begin() as db:
+        db.execute(main.Store.__table__.insert(), {
+            'id': 1, 'slug': 'beershop', 'name': 'SYNTHETIC_ENCRYPTED_V96'})
+        db.execute(main.Category.__table__.insert(), {
+            'id': 1, 'store_id': 1, 'slug': 'fake', 'name': 'Synthetic'})
+        rows = {t.name: [dict(r._mapping) for r in db.execute(select(t)).all()]
+                for t in main.Base.metadata.sorted_tables}
+    engine.dispose()
+    payload = add_integrity({
+        'format': 'beershop-snapshot-v1',
+        'created_at': '2026-11-13T09:00:00+00:00',
+        'tables': rows,
+    }, main.Base.metadata)
+    return encrypt_archive(json.dumps(payload, ensure_ascii=False, default=str).encode(),
+                           PASS)
+
+
+def test_v96_encrypted_restore_refuses_remote_and_missing_ack(monkeypatch):
+    archive = synthetic_encrypted()
+    monkeypatch.setenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL', '1')
+    monkeypatch.delenv('BEERSHOP_PERSISTENT_DATABASE_URL', raising=False)
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    monkeypatch.delenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK', raising=False)
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_encrypted_postgres(
+            archive, PASS, main.Base.metadata,
+            'postgresql://bad:fake@localhost/beershop_v96_encrypted_restore')
+    monkeypatch.setenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK',
+                       'ISOLATED_ENCRYPTED_RESTORE_ONLY')
+    for url in (
+        'postgresql://fake:fake@ep-neon.neon.tech/beershop_v96_encrypted_restore',
+        'postgresql://fake:fake@localhost/beershop_v94_rehearsal',
+        'postgresql://fake:fake@localhost/beershop_test',
+        'sqlite:///tmp/beershop_v96_encrypted_restore.db',
+    ):
+        with pytest.raises(UnsafeBackup):
+            rehearsal_restore_encrypted_postgres(archive, PASS, main.Base.metadata, url)
+    monkeypatch.setenv('DATABASE_URL', 'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_encrypted_postgres(
+            archive, PASS, main.Base.metadata,
+            'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
+
+
+def test_v96_decrypt_then_restore_exactly_once_in_pg_ci(monkeypatch):
+    url = os.getenv('BEERSHOP_V96_PG_ENCRYPTED_RESTORE_URL')
+    if not url:
+        pytest.skip('Only disposable PostgreSQL CI provides separate encrypted restore DB')
+    archive = synthetic_encrypted()
+    monkeypatch.setenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL', '1')
+    monkeypatch.setenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK',
+                       'ISOLATED_ENCRYPTED_RESTORE_ONLY')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    monkeypatch.delenv('BEERSHOP_PERSISTENT_DATABASE_URL', raising=False)
+    with pytest.raises(UnsafeEncryptedBackup):
+        rehearsal_restore_encrypted_postgres(
+            archive, 'Incorrect-synthetic-password-at-least-20',
+            main.Base.metadata, url)
+    tampered = bytearray(archive)
+    tampered[-1] ^= 1
+    with pytest.raises(UnsafeEncryptedBackup):
+        rehearsal_restore_encrypted_postgres(
+            bytes(tampered), PASS, main.Base.metadata, url)
+    from app.storage import sqlalchemy_url
+    engine = create_engine(sqlalchemy_url(url))
+    with engine.connect() as db:
+        assert not __import__('sqlalchemy').inspect(db).get_table_names()
+    engine.dispose()
+
+    report = rehearsal_restore_encrypted_postgres(
+        archive, PASS, main.Base.metadata, url)
+    assert report['mode'] == 'ENCRYPTED_LOCAL_PG_REHEARSAL_ONLY'
+    assert report['authenticated_encryption'] == 'AES-256-GCM'
+    assert report['rows'] >= 2
+    # Compare every table, including empty ones, against the authenticated
+    # manifest; checking only the store/category sample misses partial restores.
+    from app.secure_backup_v94 import decrypt_archive
+    from app.backup_v9 import _schema_id
+    manifest = json.loads(decrypt_archive(archive, PASS))['integrity']
+    assert manifest['schema_sha256'] == _schema_id(main.Base.metadata)
+    assert report['tables'] == len(main.Base.metadata.tables)
+    assert report['rows'] == sum(manifest['counts'].values())
+    assert PASS not in str(report)
+    assert 'postgresql://' not in str(report)
+
+    engine = create_engine(sqlalchemy_url(url))
+    with engine.connect() as db:
+        assert db.scalar(select(main.Store.name)) == 'SYNTHETIC_ENCRYPTED_V96'
+        assert db.scalar(select(func.count()).select_from(main.Category)) == 1
+        for table in main.Base.metadata.sorted_tables:
+            actual = db.scalar(select(func.count()).select_from(table))
+            assert actual == manifest['counts'][table.name], table.name
+        inspector = __import__('sqlalchemy').inspect(db)
+        assert set(inspector.get_table_names()) == set(manifest['counts'])
+        _assert_foreign_key_contract(main.Base.metadata, inspector)
+        _assert_unique_constraint_contract(main.Base.metadata, inspector)
+        _assert_check_constraint_contract(main.Base.metadata, inspector)
+    engine.dispose()
+    with pytest.raises(UnsafeBackup, match='no tables'):
+        rehearsal_restore_encrypted_postgres(
+            archive, PASS, main.Base.metadata, url)
+
+
+def test_v101_pg_authenticated_invalid_manifest_fails_before_connect(monkeypatch):
+    """Valid AES-GCM is insufficient: manifest integrity must pass before PG access."""
+    monkeypatch.setenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL', '1')
+    monkeypatch.setenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK',
+                       'ISOLATED_ENCRYPTED_RESTORE_ONLY')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    monkeypatch.delenv('BEERSHOP_PERSISTENT_DATABASE_URL', raising=False)
+    from app.secure_backup_v94 import decrypt_archive
+    payload = json.loads(decrypt_archive(synthetic_encrypted(), PASS))
+    payload['integrity']['schema_sha256'] = 'f' * 64
+    encrypted = encrypt_archive(json.dumps(payload).encode(), PASS)
+    # No PG server is needed: failure must happen before any connection attempt.
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_encrypted_postgres(
+            encrypted, PASS, main.Base.metadata,
+            'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
+
+
+def test_v101_pg_authenticated_missing_table_fails_before_connect(monkeypatch):
+    """Authenticated payload lacking a required table cannot initiate restore."""
+    monkeypatch.setenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL', '1')
+    monkeypatch.setenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK',
+                       'ISOLATED_ENCRYPTED_RESTORE_ONLY')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    monkeypatch.delenv('BEERSHOP_PERSISTENT_DATABASE_URL', raising=False)
+    from app.secure_backup_v94 import decrypt_archive
+    payload = json.loads(decrypt_archive(synthetic_encrypted(), PASS))
+    payload['tables'].pop('stores')
+    encrypted = encrypt_archive(json.dumps(payload).encode(), PASS)
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_encrypted_postgres(
+            encrypted, PASS, main.Base.metadata,
+            'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
+
+
+def test_v101_pg_authenticated_row_tampering_fails_before_connect(monkeypatch):
+    """Re-encrypting a modified row must not bypass snapshot integrity checks."""
+    monkeypatch.setenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL', '1')
+    monkeypatch.setenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK',
+                       'ISOLATED_ENCRYPTED_RESTORE_ONLY')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    monkeypatch.delenv('BEERSHOP_PERSISTENT_DATABASE_URL', raising=False)
+    from app.secure_backup_v94 import decrypt_archive
+    payload = json.loads(decrypt_archive(synthetic_encrypted(), PASS))
+    payload['tables']['stores'][0]['name'] = 'TAMPERED_SYNTHETIC_STORE'
+    encrypted = encrypt_archive(json.dumps(payload).encode(), PASS)
+    with pytest.raises(UnsafeBackup):
+        rehearsal_restore_encrypted_postgres(
+            encrypted, PASS, main.Base.metadata,
+            'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
+
+
+def test_v101_pg_authenticated_count_manifest_mismatch_fails_before_connect(monkeypatch):
+    """A valid encrypted archive with falsified per-table counts is rejected."""
+    monkeypatch.setenv('BEERSHOP_V94_LOCAL_PG_REHEARSAL', '1')
+    monkeypatch.setenv('BEERSHOP_V96_ENCRYPTED_RESTORE_ACK',
+                       'ISOLATED_ENCRYPTED_RESTORE_ONLY')
+    monkeypatch.delenv('DATABASE_URL', raising=False)
+    monkeypatch.delenv('BEERSHOP_PERSISTENT_DATABASE_URL', raising=False)
+    from app.secure_backup_v94 import decrypt_archive
+    payload = json.loads(decrypt_archive(synthetic_encrypted(), PASS))
+    payload['integrity']['counts']['stores'] += 1
+    encrypted = encrypt_archive(json.dumps(payload).encode(), PASS)
+    # No server at this address: failure must occur during manifest validation.
+    with pytest.raises(UnsafeBackup, match='row counts'):
+        rehearsal_restore_encrypted_postgres(
+            encrypted, PASS, main.Base.metadata,
+            'postgresql://fake:fake@localhost/beershop_v96_encrypted_restore')
+
+
+def _assert_foreign_key_contract(metadata, inspector):
+    """Compare restored foreign-key definitions, not only table/row counts."""
+    for table in metadata.sorted_tables:
+        expected = {
+            (tuple(fk.column_keys), fk.referred_table.name,
+             tuple(element.column.name for element in fk.elements))
+            for fk in table.foreign_key_constraints
+        }
+        actual = {
+            (tuple(fk['constrained_columns']), fk['referred_table'],
+             tuple(fk['referred_columns']))
+            for fk in inspector.get_foreign_keys(table.name)
+        }
+        assert actual == expected, f'Foreign-key schema drift in {table.name}'
+
+
+def test_v101_foreign_key_contract_rejects_missing_constraint():
+    """A matching table list and row counts cannot conceal missing FK DDL."""
+    class MissingForeignKeys:
+        def get_foreign_keys(self, table_name):
+            return []
+
+    with pytest.raises(AssertionError, match='Foreign-key schema drift'):
+        _assert_foreign_key_contract(main.Base.metadata, MissingForeignKeys())
+
+
+def test_v101_foreign_key_contract_rejects_unexpected_constraint():
+    """A malicious or drifted extra FK must fail even when required FKs exist."""
+    class ExtraForeignKeyInspector:
+        def get_foreign_keys(self, table_name):
+            table = main.Base.metadata.tables[table_name]
+            expected = [
+                {'constrained_columns': list(fk.column_keys),
+                 'referred_table': fk.referred_table.name,
+                 'referred_columns': [element.column.name for element in fk.elements]}
+                for fk in table.foreign_key_constraints
+            ]
+            if table_name == 'stores':
+                expected.append({'constrained_columns': ['id'],
+                                 'referred_table': 'categories',
+                                 'referred_columns': ['id']})
+            return expected
+
+    with pytest.raises(AssertionError, match='Foreign-key schema drift in stores'):
+        _assert_foreign_key_contract(main.Base.metadata, ExtraForeignKeyInspector())
+
+
+
+def _assert_unique_constraint_contract(metadata, inspector):
+    """Reject missing or unexpected PostgreSQL UNIQUE constraints after restore.
+
+    Compare column sets, not generated constraint names (dialect-dependent).
+    Unique indexes that are not SQL UNIQUE constraints are checked separately.
+    """
+    from sqlalchemy import UniqueConstraint
+
+    for table in metadata.sorted_tables:
+        expected = {
+            tuple(column.name for column in constraint.columns)
+            for constraint in table.constraints
+            if isinstance(constraint, UniqueConstraint)
+        }
+        actual = {
+            tuple(item["column_names"])
+            for item in inspector.get_unique_constraints(table.name)
+        }
+        assert actual == expected, f"Unique-constraint schema drift in {table.name}"
+
+
+def test_v101_unique_contract_rejects_missing_constraint():
+    """An inspector dropping all UNIQUE constraints must fail."""
+    class MissingUniqueInspector:
+        def get_unique_constraints(self, table_name):
+            return []
+
+    from sqlalchemy import UniqueConstraint
+    assert any(
+        isinstance(constraint, UniqueConstraint)
+        for table in main.Base.metadata.sorted_tables
+        for constraint in table.constraints
+    ), "Synthetic model fixture must contain a UNIQUE constraint"
+    with pytest.raises(AssertionError, match="Unique-constraint schema drift"):
+        _assert_unique_constraint_contract(main.Base.metadata, MissingUniqueInspector())
+
+
+def test_v101_unique_contract_rejects_unexpected_constraint():
+    """Extra UNIQUE DDL is drift, even when all expected constraints remain."""
+    from sqlalchemy import UniqueConstraint
+
+    class ExtraUniqueInspector:
+        def get_unique_constraints(self, table_name):
+            table = main.Base.metadata.tables[table_name]
+            constraints = [
+                {"column_names": [column.name for column in constraint.columns]}
+                for constraint in table.constraints
+                if isinstance(constraint, UniqueConstraint)
+            ]
+            if table_name == "stores":
+                constraints.append({"column_names": ["name"]})
+            return constraints
+
+    with pytest.raises(AssertionError, match="Unique-constraint schema drift in stores"):
+        _assert_unique_constraint_contract(main.Base.metadata, ExtraUniqueInspector())
+
+
+def _assert_check_constraint_contract(metadata, inspector):
+    """Compare explicit CHECK SQL on restored PostgreSQL tables.
+
+    Normalize whitespace only: do not discard operators, literals or clauses.
+    PostgreSQL may rewrite expressions, so an unexpected rewrite fails closed
+    for manual review instead of silently approving a restore.
+    """
+    import re
+    from sqlalchemy import CheckConstraint
+
+    def normalized(sql):
+        # Whitespace inside SQL quoted literals is data, not formatting.
+        # Keep it byte-for-byte; fail closed on malformed quoted strings.
+        source = str(sql).strip()
+        chunks = []
+        outside = []
+        index = 0
+        while index < len(source):
+            char = source[index]
+            if char != "'":
+                outside.append(char)
+                index += 1
+                continue
+            chunks.append(re.sub(r"\s+", " ", "".join(outside)))
+            outside = []
+            start = index
+            index += 1
+            while index < len(source):
+                if source[index] == "'":
+                    if index + 1 < len(source) and source[index + 1] == "'":
+                        index += 2
+                        continue
+                    index += 1
+                    break
+                index += 1
+            else:
+                raise AssertionError("Unterminated CHECK string literal")
+            chunks.append(source[start:index])
+        chunks.append(re.sub(r"\s+", " ", "".join(outside)))
+        return "".join(chunks)
+
+    for table in metadata.sorted_tables:
+        expected = {
+            normalized(constraint.sqltext)
+            for constraint in table.constraints
+            if isinstance(constraint, CheckConstraint)
+        }
+        actual = {
+            normalized(item["sqltext"])
+            for item in inspector.get_check_constraints(table.name)
+        }
+        assert actual == expected, f"Check-constraint schema drift in {table.name}"
+
+
+def test_v101_check_contract_rejects_missing_constraint():
+    """Missing CHECK cannot be accepted even if all tables are present."""
+    from sqlalchemy import MetaData, Table, Column, Integer, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("quantity", Integer),
+          CheckConstraint("quantity >= 0"))
+
+    class MissingCheckInspector:
+        def get_check_constraints(self, table_name):
+            return []
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, MissingCheckInspector())
+
+
+def test_v101_check_contract_rejects_unexpected_constraint():
+    """An extra CHECK must not be ignored by the schema audit."""
+    from sqlalchemy import MetaData, Table, Column, Integer, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("quantity", Integer),
+          CheckConstraint("quantity >= 0"))
+
+    class ExtraCheckInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "quantity >= 0"},
+                    {"sqltext": "quantity <= 999"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ExtraCheckInspector())
+
+
+def test_v101_check_contract_accepts_whitespace_only_variation():
+    """Whitespace variation must not cause a spurious drift report."""
+    from sqlalchemy import MetaData, Table, Column, Integer, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("quantity", Integer),
+          CheckConstraint("quantity >= 0"))
+
+    class EquivalentCheckInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "  quantity\t  >=\n  0  "}]
+
+    _assert_check_constraint_contract(metadata, EquivalentCheckInspector())
+
+
+def test_v101_check_contract_rejects_changed_operator():
+    """Whitespace normalization must never hide a changed CHECK operator."""
+    from sqlalchemy import MetaData, Table, Column, Integer, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("quantity", Integer),
+          CheckConstraint("quantity >= 0"))
+
+    class ChangedOperatorInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "quantity > 0"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ChangedOperatorInspector())
+
+
+def test_v101_check_contract_rejects_changed_string_literal_case():
+    """Case-sensitive CHECK literals must not be silently normalized away."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'PAID'"))
+
+    class ChangedLiteralInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'paid'"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ChangedLiteralInspector())
+
+def test_v101_check_contract_rejects_changed_whitespace_inside_literal():
+    """A whitespace edit inside a quoted CHECK value changes its semantics."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'PAID  NOW'"))
+
+    class ChangedLiteralInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'PAID NOW'"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ChangedLiteralInspector())
+
+
+def test_v101_check_contract_rejects_unterminated_literal():
+    """Malformed inspector CHECK SQL must fail closed."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'PAID'"))
+
+    class MalformedInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'PAID"}]
+
+    with pytest.raises(AssertionError, match="Unterminated CHECK string literal"):
+        _assert_check_constraint_contract(metadata, MalformedInspector())
+
+
+def test_v101_check_contract_rejects_changed_escaped_quote_literal():
+    """Escaped SQL single quotes are part of the CHECK string value."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'O''BRIEN'"))
+
+    class ChangedLiteralInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'OBRIEN'"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, ChangedLiteralInspector())
+
+
+def test_v101_check_contract_rejects_changed_trailing_space_in_literal():
+    """A trailing space inside a SQL literal is data, not formatting."""
+    from sqlalchemy import MetaData, Table, Column, String, CheckConstraint
+    metadata = MetaData()
+    Table("synthetic_checks", metadata, Column("status", String),
+          CheckConstraint("status = 'PAID '"))
+
+    class TrimmedLiteralInspector:
+        def get_check_constraints(self, table_name):
+            return [{"sqltext": "status = 'PAID'"}]
+
+    with pytest.raises(AssertionError, match="Check-constraint schema drift"):
+        _assert_check_constraint_contract(metadata, TrimmedLiteralInspector())

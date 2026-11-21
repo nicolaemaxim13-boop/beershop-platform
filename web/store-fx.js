@@ -16,7 +16,11 @@ async function fxBanner(){
 placeOrder=async function(e){
   e.preventDefault();
   if(!Object.keys(cart).length){msg('Кошик порожній');return}
-  const btn=document.getElementById('orderbtn');btn.disabled=true;
+  const btn=document.getElementById('orderbtn');
+  if(btn.disabled)return; // Avoid double-submit from rapid mobile taps.
+  btn.disabled=true;
+  window.BeerShopP1?.status('checking');
+  window.BeerShopP1?.event('checkout_attempt');
   try{
     const items=Object.entries(cart).map(([id,item])=>({variant_id:Number(id),quantity:item.qty}));
     const originalTotal=Object.values(cart).reduce((x,item)=>x+item.price*item.qty,0);
@@ -28,6 +32,8 @@ placeOrder=async function(e){
     }
     renderCart();
     if(Math.round(originalTotal*100)!==Math.round(Number(quote.total)*100)){
+      window.BeerShopP1?.status('price_changed');
+      window.BeerShopP1?.event('checkout_price_changed');
       msg('Курс USD/UAH змінився, ціни кошика оновлено. Перевірте суму і підтвердьте замовлення ще раз.');
       fxBanner();return;
     }
@@ -38,6 +44,8 @@ placeOrder=async function(e){
     const order=await orderResp.json();
     if(!orderResp.ok)throw Error(order.detail || 'Помилка замовлення');
     cart={};pendingKey=null;renderCart();toggleCart(false);e.target.reset();
+    window.BeerShopP1?.status('success');
+    window.BeerShopP1?.event('checkout_success');
     const confirmation=document.getElementById('checkout-confirmation');
     if(confirmation){
       confirmation.textContent='Замовлення №'+order.id+' прийнято на суму '+fmt(Number(order.total))+'. Менеджер зв’яжеться з вами. Оплата ще не підтверджена.';
@@ -46,7 +54,11 @@ placeOrder=async function(e){
     }
     msg('Замовлення №'+order.id+' створено. Менеджер зв’яжеться з вами.');
     reload();
-  }catch(error){msg(error.message)}finally{btn.disabled=false}
+  }catch(error){
+    window.BeerShopP1?.status('error');
+    window.BeerShopP1?.event('checkout_error');
+    msg(error.message);
+  }finally{btn.disabled=false}
 };
 fxBanner();
 setInterval(fxBanner, 30*60*1000);

@@ -16,8 +16,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 from uuid import uuid4
-from fastapi import FastAPI, Depends, Header, HTTPException, Query, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, Depends, Header, HTTPException, Query, UploadFile, File, Request
+from fastapi.responses import FileResponse, JSONResponse, Response, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.exc import IntegrityError
@@ -28,6 +28,25 @@ ROOT = Path(__file__).resolve().parents[1]
 from .storage import sqlalchemy_url, migrate_once
 from .fx import fetch_nbu, convert_price
 from .pricing import calculate_sell_rate, round_retail_up
+from .readiness_v9 import build_report, valid_ukrainian_iban
+from .release_gate_v97 import audit_repository
+from .ux_p1 import (enabled_for_fixture as p1_ux_enabled,
+                    require_fixture as require_p1_fixture,
+                    record as record_p1_event,
+                    report as p1_conversion_report,
+                    preview_notification_templates as p1_notification_previews,
+                    EVENTS as P1_EVENTS)
+from .seo_p1 import product_preview_html
+from .backup_v9 import add_integrity
+from .encrypted_export_v98 import (enabled as encrypted_export_v98_enabled,
+                                   require_synthetic_encrypted_export,
+                                   encrypted_snapshot_from_session)
+from .startup_preflight_v98 import (enabled as schema_managed_v98_enabled,
+                                     verify_premigrated_synthetic_schema)
+from .api_rate_v95 import install_api_limiter, enabled as rate_v95_enabled, validate_staging as validate_rate_v95_staging
+from .trusted_proxy_v96 import enabled as signed_edge_v96_enabled, validate_edge_config
+from .staff_v9 import setup_staff_auth, is_enabled as staff_v9_enabled, verify_bearer_staff
+from .rbac_v91 import strict_rbac_enabled, require_isolated_staging, authorize_legacy_admin_request
 LEGACY_URL = os.getenv('DATABASE_URL', 'sqlite:///' + str(ROOT / 'beershop_v2.db'))
 PERSISTENT_URL = os.getenv('BEERSHOP_PERSISTENT_DATABASE_URL', '').strip()
 # First Neon deployment copies source Render DB before serving traffic.
@@ -234,29 +253,88 @@ class StatusIn(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app):
-    if PERSISTENT_URL:
-        migrate_once(Base.metadata, LEGACY_URL, engine)
-    Base.metadata.create_all(engine)  # Demo bootstrap; replace with Alembic migrations in production.
-    with SessionLocal.begin() as db:
-        if not db.get(Store, 1):
-            db.add(Store(id=1, slug='beershop', name='BeerShop Equipment'))
-            db.flush()
-            cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
-            for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
-    with SessionLocal.begin() as db:
-        crm_backfill(db)
-        inventory_backfill(db)
+    # Block all staging identity/RBAC configurations BEFORE any schema creation,
+    # migration or CRM/inventory backfill can touch a production database.
+    if staff_v9_enabled() or strict_rbac_enabled():
+        from .rbac_v91 import verify_staging_database
+        verify_staging_database(persistent_url=PERSISTENT_URL, database_url=DB_URL)
+        if strict_rbac_enabled():
+            require_isolated_staging(persistent_url=PERSISTENT_URL, database_url=DB_URL)
+    # Explicit v9.5 opt-in must reject unsafe DBs BEFORE startup migrations.
+    if rate_v95_enabled():
+        validate_rate_v95_staging(database_url=DB_URL, persistent_url=PERSISTENT_URL)
+    elif signed_edge_v96_enabled():
+        # No silent no-op of a misconfigured signed-edge security requirement.
+        validate_edge_config()
+    if encrypted_export_v98_enabled():
+        # Never bootstrap a non-fixture DB with the new encrypted-export flag.
+        require_synthetic_encrypted_export(database_url=DB_URL,
+                                           persistent_url=PERSISTENT_URL)
+    if schema_managed_v98_enabled():
+        # Separate fixture-only rehearsal for future Alembic-controlled startup.
+        # No create_all, legacy copying, initial data seeding or CRM backfill.
+        verify_premigrated_synthetic_schema(
+            engine=engine, metadata=Base.metadata,
+            database_url=DB_URL, persistent_url=PERSISTENT_URL)
+    else:
+        if PERSISTENT_URL:
+            migrate_once(Base.metadata, LEGACY_URL, engine)
+        Base.metadata.create_all(engine)  # Legacy demo bootstrap; production unchanged.
+        with SessionLocal.begin() as db:
+            if not db.get(Store, 1):
+                db.add(Store(id=1, slug='beershop', name='BeerShop Equipment'))
+                db.flush()
+                cats = [('couplers', 'Забірні головки'), ('taps', 'Пивні крани'), ('hoses', 'Шланги та фітинги'), ('cleaning', 'Промивка')]
+                for slug, name in cats: db.add(Category(store_id=1, slug=slug, name=name))
+        with SessionLocal.begin() as db:
+            crm_backfill(db)
+            inventory_backfill(db)
     yield
 app = FastAPI(title='BeerShop Platform', version='4.4.0', lifespan=lifespan)
+install_api_limiter(app, Base, SessionLocal, database_url=DB_URL, persistent_url=PERSISTENT_URL)
 
 def session():
     with SessionLocal() as db: yield db
 
-def auth(authorization: Annotated[str | None, Header()] = None):
+def auth(request: Request,
+         authorization: Annotated[str | None, Header()] = None,
+         db: Session = Depends(session)):
+    # OFF by default: existing production behavior remains unchanged.
+    # ON only for isolated staging: shared admin token is not an MFA bypass.
+    if strict_rbac_enabled():
+        return authorize_legacy_admin_request(
+            request=request, authorization=authorization, db=db,
+            user_model=StaffUserV9, session_model=StaffSessionV9,
+            persistent_url=PERSISTENT_URL, database_url=DB_URL)
     token = os.getenv('BEERSHOP_ADMIN_TOKEN', '')
     if len(token) < 32: raise HTTPException(503, 'Admin token not configured')
+    if os.getenv('BEERSHOP_V9_AUDIT_TOKEN', '') == token:
+        raise HTTPException(503, 'Audit token must differ from admin token')
     provided = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
     if not secrets.compare_digest(token, provided): raise HTTPException(401, 'Unauthorized')
+
+
+def auth_readiness(authorization: Annotated[str | None, Header()] = None,
+                   db: Session = Depends(session)):
+    """Read-only audit; in strict staging only MFA owner/auditor sessions work."""
+    if strict_rbac_enabled():
+        require_isolated_staging(persistent_url=PERSISTENT_URL, database_url=DB_URL)
+        user, _ = verify_bearer_staff(authorization, db, StaffUserV9, StaffSessionV9)
+        if user.role not in ('owner', 'auditor'):
+            raise HTTPException(403, 'Insufficient role')
+        return
+    admin = os.getenv('BEERSHOP_ADMIN_TOKEN', '')
+    if len(admin) < 32:
+        raise HTTPException(503, 'Admin token not configured')
+    if os.getenv('BEERSHOP_V9_AUDIT_TOKEN', '') == admin:
+        raise HTTPException(503, 'Audit token must differ from admin token')
+    provided = authorization[7:] if authorization and authorization.startswith('Bearer ') else ''
+    if secrets.compare_digest(provided, admin):
+        return
+    audit = os.getenv('BEERSHOP_V9_AUDIT_TOKEN', '')
+    if len(audit) >= 32 and audit != admin and secrets.compare_digest(provided, audit):
+        return
+    raise HTTPException(401, 'Unauthorized')
 
 def retail_unit_price(variant, fx):
     # Single authoritative public selling-price policy for catalog,
@@ -460,6 +538,64 @@ def quote_prices(data: QuoteIn, db: Session = Depends(session)):
     return {'currency': 'UAH', 'total': str(total), 'items': details,
             'rate': str(fx['rate']), 'rate_date': fx['effective_date']}
 
+class P1FunnelEvent(BaseModel):
+    # Exactly one finite event name. Reject arbitrary text or buyer PII.
+    model_config = ConfigDict(extra='forbid')
+    event: Literal[
+        'catalog_view', 'product_view', 'cart_add',
+        'checkout_open', 'checkout_attempt', 'checkout_success',
+        'checkout_error', 'checkout_price_changed'
+    ]
+
+
+@app.get('/api/p1/ux-capabilities')
+def p1_ux_capabilities():
+    return JSONResponse(
+        {'analytics_enabled': p1_ux_enabled(DB_URL, PERSISTENT_URL),
+         'mode': 'synthetic_aggregate_only'},
+        headers={'Cache-Control': 'no-store'})
+
+
+@app.post('/api/p1/ux-event', status_code=204)
+def p1_ux_event(payload: P1FunnelEvent, request: Request):
+    require_p1_fixture(DB_URL, PERSISTENT_URL)
+    # Extra defense: browser fixture runs only via local loopback peer.
+    if not request.client or request.client.host not in ('127.0.0.1', '::1', 'testclient'):
+        raise HTTPException(404, 'Not found')
+    record_p1_event(payload.event)
+    return Response(status_code=204, headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/api/admin/p1/ux-report', dependencies=[Depends(auth_readiness)])
+def p1_ux_report():
+    require_p1_fixture(DB_URL, PERSISTENT_URL)
+    return JSONResponse(p1_conversion_report(),
+                        headers={'Cache-Control': 'private, no-store'})
+
+
+@app.get('/api/admin/p1/notification-previews', dependencies=[Depends(auth_readiness)])
+def p1_notification_previews():
+    require_p1_fixture(DB_URL, PERSISTENT_URL)
+    return JSONResponse(p1_notification_previews(),
+                        headers={'Cache-Control': 'private, no-store'})
+
+
+@app.get('/assets/ux-p1.js')
+def p1_ux_javascript():
+    return FileResponse(ROOT / 'web' / 'ux-p1.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store',
+                                 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/assets/ux-p1.css')
+def p1_ux_stylesheet():
+    return FileResponse(ROOT / 'web' / 'ux-p1.css',
+                        media_type='text/css',
+                        headers={'Cache-Control': 'no-store',
+                                 'X-Content-Type-Options': 'nosniff'})
+
+
 @app.get('/api/health')
 def health(): return {'status': 'ok', 'version': '4.4.0'}
 @app.get('/api/categories')
@@ -566,6 +702,12 @@ def update_variant(variant_id: int, data: VariantUpdate, db: Session = Depends(s
     db.commit(); return variant_dict(v)
 @app.post('/api/orders', status_code=201)
 def checkout(data: CheckoutIn, db: Session = Depends(session)):
+    # Staging-only switches. Both default to existing behavior when unset.
+    # Production remains untouched unless an operator explicitly configures them.
+    if os.getenv('BEERSHOP_V9_DISABLE_ORDER_CREATION') == '1':
+        raise HTTPException(503, 'STAGING: створення замовлень вимкнено.')
+    if os.getenv('BEERSHOP_V9_REQUIRE_QUOTE_TOTAL') == '1' and data.expected_total is None:
+        raise HTTPException(428, 'Перед замовленням потрібно підтвердити актуальний розрахунок кошика.')
     fx = pricing_context()
     if len({x.variant_id for x in data.items}) != len(data.items): raise HTTPException(422, 'Duplicate variant IDs')
     try:
@@ -644,7 +786,8 @@ def invoice(order_id: int, db: Session = Depends(session)):
     o = db.scalar(select(Order).where(Order.store_id == 1, Order.id == order_id))
     if not o: raise HTTPException(404, 'Order not found')
     iban = os.getenv('BEERSHOP_IBAN', '').strip(); payee = os.getenv('BEERSHOP_PAYEE', '').strip()
-    if not iban or not payee: raise HTTPException(503, 'Bank details not configured')
+    if not valid_ukrainian_iban(iban) or len(payee) < 5:
+        raise HTTPException(503, 'Реквізити рахунку неповні або UA IBAN має неправильну контрольну суму.')
     return {'invoice_number': f'BS-{o.id:06}', 'currency': 'UAH', 'total': str(o.total), 'iban': iban, 'payee': payee,
             'purpose': f'Оплата замовлення BS-{o.id:06}', 'payment_status': o.payment_status,
             'note': 'Оплату звіряє менеджер за банківською випискою. Це не фіскальний документ.'}
@@ -672,14 +815,22 @@ def manage():
 def storefront_product_page(slug: str, db: Session = Depends(session)):
     if not re.fullmatch(r'[a-z0-9-]{2,130}', slug):
         raise HTTPException(404, 'Product not found')
-    visible = db.scalar(select(Product.id).where(Product.store_id == 1,
+    visible = db.scalar(select(Product).where(Product.store_id == 1,
         Product.slug == slug, Product.active.is_(True)))
     if visible is None:
         raise HTTPException(404, 'Product not found')
-    return FileResponse(ROOT / 'web' / 'index.html', headers={
+    headers = {
         'Cache-Control': 'no-store, no-cache, max-age=0, must-revalidate',
         'X-Content-Type-Options': 'nosniff'
-    })
+    }
+    # Isolated local P1 preview only; no public canonical/indexing claim.
+    if p1_ux_enabled(DB_URL, PERSISTENT_URL):
+        rendered = product_preview_html(
+            (ROOT / 'web' / 'index.html').read_text(encoding='utf-8'),
+            visible)
+        return HTMLResponse(content=rendered, headers={
+            **headers, 'X-Robots-Tag': 'noindex, nofollow'})
+    return FileResponse(ROOT / 'web' / 'index.html', headers=headers)
 
 @app.get('/api/admin/products', dependencies=[Depends(auth)])
 def admin_products(db: Session = Depends(session)):
@@ -1085,7 +1236,28 @@ def catalog32_css():
     return FileResponse(ROOT / 'web' / 'admin-catalog32.css', media_type='text/css',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
 
+# Read-only source-level NO_GO decision. Same owner/auditor permissions as
+# v9 readiness; does not inspect or return real customer rows or secrets.
+@app.get('/api/admin/v97/release-gate', dependencies=[Depends(auth_readiness)])
+def production_release_gate_v97():
+    return audit_repository(ROOT)
+
 # Admin-only JSON snapshot. Contains customer PII; requires bearer token.
+@app.get('/api/admin/v9/readiness', dependencies=[Depends(auth_readiness)])
+def sales_readiness_v9(db: Session = Depends(session)):
+    """Read-only: no bank statement lookup, payment updates or stock mutations."""
+    return build_report(
+        db, Product=Product, Variant=Variant, Order=Order, OrderItem=OrderItem,
+        PricingPolicy=PricingPolicy,
+        Reservation=Base.metadata.tables['stock_reservations'],
+        Movement=Base.metadata.tables['stock_movements'],
+        admin_token=os.getenv('BEERSHOP_ADMIN_TOKEN', ''),
+        iban=os.getenv('BEERSHOP_IBAN', ''),
+        payee=os.getenv('BEERSHOP_PAYEE', ''),
+        persistent_store=bool(PERSISTENT_URL),
+    )
+
+
 @app.get('/api/admin/maintenance/report', dependencies=[Depends(auth)])
 def maintenance_report(db: Session = Depends(session)):
     names = ('stores', 'categories', 'products', 'variants', 'import_logs', 'orders', 'order_items')
@@ -1097,18 +1269,135 @@ def maintenance_report(db: Session = Depends(session)):
             'products_hidden': db.scalar(select(func.count()).select_from(Product).where(Product.active.is_(False))),
             'stock_positive': db.scalar(select(func.count()).select_from(Variant).where(Variant.stock > 0))}
 
+def auth_encrypted_export_v98(
+        authorization: Annotated[str | None, Header()] = None,
+        db: Session = Depends(session)):
+    # Explicit owner-only MFA verification; no shared-token fallback.
+    require_synthetic_encrypted_export(database_url=DB_URL,
+                                       persistent_url=PERSISTENT_URL)
+    user, _ = verify_bearer_staff(
+        authorization, db, StaffUserV9, StaffSessionV9)
+    if user.role != 'owner':
+        raise HTTPException(403, 'Owner MFA is required for encrypted export')
+
+
+@app.get('/api/admin/v98/maintenance/export-encrypted',
+         dependencies=[Depends(auth_encrypted_export_v98)])
+def encrypted_maintenance_export_v98(db: Session = Depends(session)):
+    # Validate again at the point of use: no fixture data read before guards.
+    passphrase = require_synthetic_encrypted_export(
+        database_url=DB_URL, persistent_url=PERSISTENT_URL)
+    encrypted = encrypted_snapshot_from_session(db, Base.metadata, passphrase)
+    return Response(content=encrypted, media_type='application/octet-stream',
+                    headers={
+                        'Content-Disposition':
+                            'attachment; filename="beershop-staging-private-v98.bse"',
+                        'Cache-Control': 'private, no-store, max-age=0',
+                        'Pragma': 'no-cache',
+                        'X-Content-Type-Options': 'nosniff',
+                        'X-Robots-Tag': 'noindex, nofollow',
+                        'Referrer-Policy': 'no-referrer',
+                    })
+
+
 @app.get('/api/admin/maintenance/export', dependencies=[Depends(auth)])
 def maintenance_export(db: Session = Depends(session)):
+    if encrypted_export_v98_enabled():
+        # Isolated staging chooses encrypted-only. Legacy production is unchanged.
+        require_synthetic_encrypted_export(database_url=DB_URL,
+                                           persistent_url=PERSISTENT_URL)
+        raise HTTPException(403, 'Plaintext backup disabled in encrypted-only staging')
     snapshot = {'format': 'beershop-snapshot-v1',
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'tables': {t.name: [dict(r._mapping) for r in db.execute(select(t)).all()]
                            for t in Base.metadata.sorted_tables}}
+    # v9 adds a deterministic integrity manifest while preserving v1 fields.
+    # No extra network calls. This export still contains customer PII:
+    # encrypt at rest and never upload it to third-party validation services.
+    snapshot = add_integrity(snapshot, Base.metadata)
     output = json.dumps(snapshot, default=str, ensure_ascii=False).encode('utf-8')
     return Response(content=output, media_type='application/json; charset=utf-8',
                     headers={'Content-Disposition': 'attachment; filename="beershop-private-backup.json"',
                              'Cache-Control': 'private, no-store',
                              'X-Content-Type-Options': 'nosniff',
                              'X-Robots-Tag': 'noindex, nofollow'})
+
+@app.get('/staff-v9')
+def staff_v9_page():
+    if not staff_v9_enabled():
+        raise HTTPException(503, 'Staff pilot is disabled')
+    return FileResponse(ROOT / 'web' / 'staff-v9.html', headers={
+        'Cache-Control': 'private, no-store',
+        'X-Robots-Tag': 'noindex, nofollow',
+        'Content-Security-Policy': "default-src 'none'; script-src 'self'; "
+          "style-src 'self'; connect-src 'self'; form-action 'self'; "
+          "base-uri 'none'; frame-ancestors 'none'"
+    })
+
+
+@app.get('/assets/staff-v9.js')
+def staff_v9_script():
+    if not staff_v9_enabled():
+        raise HTTPException(503, 'Staff pilot disabled')
+    return FileResponse(ROOT / 'web' / 'staff-v9.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control':'no-store'})
+
+
+@app.get('/assets/staff-v9.css')
+def staff_v9_styles():
+    if not staff_v9_enabled():
+        raise HTTPException(503, 'Staff pilot disabled')
+    return FileResponse(ROOT / 'web' / 'staff-v9.css',
+                        media_type='text/css',
+                        headers={'Cache-Control':'no-store'})
+
+
+def _staging_db_safe():
+    from .rbac_v91 import verify_staging_database
+    try:
+        verify_staging_database(persistent_url=PERSISTENT_URL, database_url=DB_URL)
+        return True
+    except HTTPException:
+        return False
+
+
+@app.get('/api/v91/features')
+def v91_features():
+    # Public non-secret feature signal so the legacy admin UI can hide
+    # obsolete external CRM panels in strict isolated staging only.
+    staff_crm_login = (
+        strict_rbac_enabled()
+        and staff_v9_enabled()
+        and os.getenv('BEERSHOP_V91_STAGING_ACK') == 'ISOLATED_STAGING_ONLY'
+        and not PERSISTENT_URL
+        and _staging_db_safe()
+    )
+    return {'own_crm_only': strict_rbac_enabled(),
+            'crm_name': 'BeerShop CRM',
+            'staff_crm_login': staff_crm_login}
+
+
+@app.get('/assets/own-crm-v91.js')
+def own_crm_v91_script():
+    return FileResponse(ROOT / 'web' / 'own-crm-v91.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/assets/readiness-v9.js')
+def sales_readiness_js_v9():
+    return FileResponse(ROOT / 'web' / 'readiness-v9.js',
+                        media_type='application/javascript',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+@app.get('/assets/readiness-v9.css')
+def sales_readiness_css_v9():
+    return FileResponse(ROOT / 'web' / 'readiness-v9.css',
+                        media_type='text/css',
+                        headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'})
+
 
 @app.get('/assets/admin-backup.js')
 def backup_js():
@@ -1171,13 +1460,30 @@ from .crm import setup_crm
 crm_attach_order, crm_backfill = setup_crm(app, Base, Order, OrderItem, OrderOperations,
                                           OperationsAudit, auth, session, order_dict,inventory_order,inventory_backfill)
 
+# Opt-in staging only: identity tokens never authorize legacy /api/admin
+# mutations, customer records, CRM or bank operations.
+StaffUserV9, StaffSessionV9, create_staff_user_v9 = setup_staff_auth(
+    app, Base, session, lambda db: sales_readiness_v9(db=db))
+
+
 @app.middleware('http')
 async def private_crm_responses(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(('/api/admin/crm','/api/admin/inventory','/crm/')) or request.url.path in {'/crm','/crm-legacy'}:
-        response.headers['Cache-Control'] = 'private, no-store'
+    # Defense-in-depth on both public and admin endpoints, without leaking
+    # financial or customer data into the browser cache or referrer headers.
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+    if request.url.scheme == 'https':
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000'
+    if (request.url.path.startswith(('/api/admin/', '/crm/')) or
+            request.url.path in {'/crm', '/crm-legacy', '/manage', '/staff-v9'}):
+        # Preserve stronger no-store/no-cache headers explicitly set by the
+        # admin HTML route (existing consumers and tests rely on their order).
+        if 'Cache-Control' not in response.headers:
+            response.headers['Cache-Control'] = 'private, no-store'
         response.headers['X-Robots-Tag'] = 'noindex, nofollow'
-        response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
 
 @app.get('/crm')

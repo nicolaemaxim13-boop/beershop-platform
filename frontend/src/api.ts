@@ -1,3 +1,5 @@
+import { revokeStaffToken } from "./staffAuth";
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -28,6 +30,13 @@ export class ApiClient {
     this.token = "";
     for (const controller of this.controllers) controller.abort();
     this.controllers.clear();
+  }
+  async revokeStaffSession(): Promise<void> {
+    // Drop our local credentials *before* contacting the server. Revoke is
+    // independent from aborted CRM requests and never persists the token.
+    const token = this.token;
+    this.dispose();
+    if (token) await revokeStaffToken(token);
   }
   async request<T>(
     path: string,

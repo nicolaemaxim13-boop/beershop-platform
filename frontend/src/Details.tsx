@@ -135,10 +135,12 @@ function Order({
   open,
   edit,
   changed,
+  staffRole,
 }: {
   o: OrderDetail;
   api: ApiClient;
   managers: Manager[];
+  staffRole?: "owner" | "operations";
   open: (t: DetailTarget) => void;
   edit: (t: EditorTarget) => void;
   changed: (message: string) => void;
@@ -337,13 +339,13 @@ function Order({
             </span>
           </p>
           <div className="actions">
-            <button
+            {(!staffRole || staffRole === "owner") && <button
               data-action="bank"
               disabled={o.payment_status === "paid" || o.status === "cancelled"}
               onClick={() => edit({ kind: "bank", data: o })}
             >
               Звірити оплату
-            </button>
+            </button>}
             <button
               data-action="waybill"
               disabled={
@@ -357,7 +359,7 @@ function Order({
             </button>
             <button
               data-action="tracking"
-              disabled={!o.tracking_number}
+              disabled={!o.tracking_number || Boolean(staffRole)}
               onClick={() =>
                 void mutate(async () => {
                   const result = await api.request<{
@@ -472,10 +474,12 @@ function Stock({
   v,
   open,
   edit,
+  staffRole,
 }: {
   v: StockDetail;
   open: (t: DetailTarget) => void;
   edit: (t: EditorTarget) => void;
+  staffRole?: "owner" | "operations";
 }) {
   const names: Record<string, string> = {
     reserved: "Резерв замовлення",
@@ -505,13 +509,13 @@ function Stock({
             </div>
           ))}
         </div>
-        <button
+        {(!staffRole || staffRole === "owner") && <button
           data-action="edit-stock"
           onClick={() => edit({ kind: "stock", data: v })}
         >
           <Pencil />
           Перерахунок
-        </button>
+        </button>}
       </section>
       <section className="detail-section">
         <h3>Відкриті резерви</h3>
@@ -561,12 +565,14 @@ export function Details({
   edit,
   changed,
   onClose,
+  staffRole,
 }: {
   target: DetailTarget;
   api: ApiClient;
   revision: number;
   managers?: Manager[];
   managerError?: string;
+  staffRole?: "owner" | "operations";
   open: (t: DetailTarget) => void;
   edit: (t: EditorTarget) => void;
   changed: (message: string) => void;
@@ -622,6 +628,7 @@ export function Details({
             o={data as OrderDetail}
             api={api}
             managers={managers}
+            staffRole={staffRole}
             open={open}
             edit={edit}
             changed={changed}
@@ -638,7 +645,7 @@ export function Details({
           />
         )}
         {data && type === "inventory" && (
-          <Stock v={data as StockDetail} open={open} edit={edit} />
+          <Stock v={data as StockDetail} open={open} edit={edit} staffRole={staffRole} />
         )}
       </div>
     </Modal>
